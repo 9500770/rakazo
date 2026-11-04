@@ -17,6 +17,7 @@ import {
   observeShellCommand,
   SHELL_STILL_RUNNING_NOTICE,
 } from "./shell-command-stream.js";
+import { userComputerApprovalMode } from "./user-computer-approval.js";
 import {
   USER_COMPUTER_ACT_TOOL,
   USER_COMPUTER_OBSERVE_TOOL,
@@ -67,8 +68,10 @@ export function userComputerOwner(input: {
 }
 
 /**
- * The user's own computer always asks a person first, in every approval mode and whatever the
- * rules allow, until they choose "Allow in this space"; a block still refuses it. These tools run
+ * The user's own computer asks a person first, in every approval mode and whatever the rules
+ * allow, until they choose "Allow in this space"; a block still refuses it. A deployment can
+ * change that with RAKAZO_USER_COMPUTER_APPROVAL (see user-computer-approval.ts): `always` asks
+ * even after that, `never` runs without asking. The space's mode never loosens it. These tools run
  * only in the user's own runs (see userComputerOwner), so any effect of them past "intended" in
  * this space traces back to that approval. Removing every paired computer ends it, so pairing again
  * asks again. Screen control is approved per app.
@@ -80,6 +83,11 @@ export async function userComputerGate(
   args: Record<string, unknown>,
 ): Promise<"deny" | "allow" | "ask"> {
   if (blocked) return "deny";
+  // The owner's own computers follow their own mode (see user-computer-approval.ts): a sandbox may
+  // run unattended, a real desktop may be told to ask every time.
+  const mode = userComputerApprovalMode();
+  if (mode === "never") return "allow";
+  if (mode === "always") return "ask";
   const { deps, run } = ctx;
   const pairedSince = await deps.userDevices?.pairedSince(run.userId);
   if (!pairedSince) return "ask";

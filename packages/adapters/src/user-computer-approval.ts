@@ -1,0 +1,19 @@
+/**
+ * How much a bot may do on the owner's own computer, kept apart from the space's approval mode.
+ * "Never ask" suits a VM the run owns; the person's real desktop may still be told to ask. The mode
+ * is read per call, so a deployment sets it once with an environment variable and nothing is
+ * migrated, stored, or pushed to the desktop app.
+ *
+ * RAKAZO_USER_COMPUTER_APPROVAL:
+ * - `ask` (default) asks the first time per shell or app in a space, then honors "Allow in this space".
+ * - `always` asks every time, even when this space allowed it before.
+ * - `never` runs without asking; a block rule still refuses, and the desktop's own permission still applies.
+ */
+export type UserComputerApprovalMode = "ask" | "always" | "never";
+
+export function userComputerApprovalMode(
+  env: Record<string, string | undefined> = process.env,
+): UserComputerApprovalMode {
+  const mode = env.RAKAZO_USER_COMPUTER_APPROVAL?.trim().toLowerCase();
+  return mode === "never" || mode === "always" ? mode : "ask";
+}

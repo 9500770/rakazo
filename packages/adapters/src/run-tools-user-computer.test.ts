@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostComputerRequest } from "./host-computer-protocol.js";
 import type { RunContext } from "./run-context.js";
 import type { ToolCall } from "./run-tool-gate.js";
@@ -9,6 +9,7 @@ import {
   userComputerOwner,
   userComputerShell,
 } from "./run-tools-user-computer.js";
+import { userComputerApprovalMode } from "./user-computer-approval.js";
 import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
 
@@ -128,6 +129,76 @@ describe("userComputerGate", () => {
       userComputerGate(ctx, false, "user_computer_observe", { app: "mail" }),
     ).resolves.toBe("allow");
     expect(findMany).toHaveBeenCalledTimes(3);
+    await expect(
+      userComputerGate(ctx, false, "user_computer_observe", { app: "Notes" }),
+    ).resolves.toBe("ask");
+  });
+});
+
+describe("userComputerApprovalMode", () => {
+  it("defaults to ask and reads the mode from the environment", () => {
+    expect(userComputerApprovalMode({})).toBe("ask");
+    expect(userComputerApprovalMode({ RAKAZO_USER_COMPUTER_APPROVAL: " always " })).toBe("always");
+    expect(userComputerApprovalMode({ RAKAZO_USER_COMPUTER_APPROVAL: "NEVER" })).toBe("never");
+    expect(userComputerApprovalMode({ RAKAZO_USER_COMPUTER_APPROVAL: "yes" })).toBe("ask");
+  });
+});
+
+describe("userComputerGate approval mode", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function gatedContext() {
+    const lookup = vi.fn(async () => {
+      throw new Error("the mode decides without looking up earlier approvals");
+    });
+    const ctx = {
+      deps: {
+        userDevices: { pairedSince: async () => new Date(0) },
+        prisma: { externalEffect: { findMany: lookup, findFirst: lookup } },
+      },
+      run: { spaceId: "space-1", userId: "user-1" },
+    } as unknown as RunContext;
+    return { ctx, lookup };
+  }
+
+  it("asks every time in always mode, even after this space allowed it", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "always");
+    const { ctx, lookup } = gatedContext();
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("ask");
+    await expect(
+      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
+    ).resolves.toBe("ask");
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("runs in never mode, and still refuses a block", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "never");
+    const { ctx } = gatedContext();
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("allow");
+    await expect(
+      userComputerGate(ctx, true, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("deny");
+  });
+
+  it("asks once per app in ask mode, the default", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "");
+    const findMany = vi.fn(async () => [{ id: "e1", request: { app: "Mail" } }]);
+    const ctx = {
+      deps: {
+        userDevices: { pairedSince: async () => new Date(0) },
+        prisma: { externalEffect: { findMany, findFirst: vi.fn(async () => ({ id: "e1" })) } },
+      },
+      run: { spaceId: "space-1", userId: "user-1" },
+    } as unknown as RunContext;
+    await expect(
+      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
+    ).resolves.toBe("allow");
     await expect(
       userComputerGate(ctx, false, "user_computer_observe", { app: "Notes" }),
     ).resolves.toBe("ask");
