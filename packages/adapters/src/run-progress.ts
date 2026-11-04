@@ -97,19 +97,22 @@ export function canPublishDurableProgress(reply: ReplyState) {
   );
 }
 
-const BROWSER_AND_DESKTOP_TOOLS = new Set([
+const LONG_TASK_TOOLS = new Set([
   ...IMAGE_RETURNING_COMPUTER_TOOLS,
   ...PAGE_BROWSER_TOOL_NAMES,
   ...USER_COMPUTER_SCREEN_TOOLS,
+  // A backgrounded shell can run for the whole ceiling, as long as a browser or desktop task.
+  "shell",
+  "user_computer_shell",
 ]);
 
 export function noteComputerTaskStep(reply: ReplyState, toolName: string) {
-  if (BROWSER_AND_DESKTOP_TOOLS.has(toolName)) reply.computerTaskStarted = true;
+  if (LONG_TASK_TOOLS.has(toolName)) reply.computerTaskStarted = true;
 }
 
 /**
- * Browser and desktop tasks often take minutes, so the run's first interim message may tell
- * the person so at once. Runs nobody is waiting on keep the fresh-turn rule.
+ * Long tasks often take minutes, so the run's first interim message may tell the person
+ * so at once. Runs nobody is waiting on keep the fresh-turn rule.
  */
 export function canPostLongTaskHeadsUp(ctx: RunContext) {
   const { reply } = ctx.state;
