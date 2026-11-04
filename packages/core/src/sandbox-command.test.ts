@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  backgroundCommandCeilingMs,
   boundedSandboxCommandTimeoutMs,
+  DEFAULT_BACKGROUND_COMMAND_CEILING_MS,
   DEFAULT_SANDBOX_COMMAND_TIMEOUT_MS,
   MAX_SANDBOX_COMMAND_TIMEOUT_MS,
   sandboxCommandTimeoutMs,
@@ -32,5 +34,18 @@ describe("sandbox command timeout", () => {
     expect(boundedSandboxCommandTimeoutMs(undefined, Number.POSITIVE_INFINITY)).toBe(
       DEFAULT_SANDBOX_COMMAND_TIMEOUT_MS,
     );
+  });
+
+  it("uses a safe background ceiling and accepts a bounded deployment override", () => {
+    expect(backgroundCommandCeilingMs({})).toBe(DEFAULT_BACKGROUND_COMMAND_CEILING_MS);
+    expect(backgroundCommandCeilingMs({ SANDBOX_BACKGROUND_CEILING_MS: "120000" })).toBe(120_000);
+    expect(backgroundCommandCeilingMs({ SANDBOX_BACKGROUND_CEILING_MS: "invalid" })).toBe(
+      DEFAULT_BACKGROUND_COMMAND_CEILING_MS,
+    );
+    expect(
+      backgroundCommandCeilingMs({
+        SANDBOX_BACKGROUND_CEILING_MS: String(MAX_SANDBOX_COMMAND_TIMEOUT_MS + 1),
+      }),
+    ).toBe(DEFAULT_BACKGROUND_COMMAND_CEILING_MS);
   });
 });

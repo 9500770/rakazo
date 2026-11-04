@@ -120,7 +120,11 @@ export interface CommandRequest {
   /** Remove these variables after all environment overlays, including inherited values. */
   unsetEnv?: string[];
   pty?: boolean;
-  /** Maximum wall-clock runtime before the command and its descendants are terminated. */
+  /**
+   * Soft wall-clock budget for a streamed command: past this the adapter hands the process
+   * off instead of killing it. Only the background ceiling terminates the command and its
+   * descendants.
+   */
   timeoutMs?: number;
 }
 

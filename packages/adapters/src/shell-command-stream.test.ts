@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { automated } from "./automated-messages.js";
 import { TOOL_RESULT_TEXT_LIMIT } from "./pi-runtime-limits.js";
 import {
@@ -6,6 +6,8 @@ import {
   formatFinishedShellCommand,
   isRunningShellCommand,
   observeShellCommand,
+  SHELL_STREAM_IDLE_MS,
+  SHELL_STREAM_STARTUP_SILENCE_MS,
   SHELL_STILL_RUNNING_NOTICE,
 } from "./shell-command-stream.js";
 
@@ -226,6 +228,84 @@ describe("observeShellCommand", () => {
     expect(joined).not.toContain("SECRET123");
     expect(seen.every((line) => !line.includes("SECRET123"))).toBe(true);
   });
+
+  it("returns a silent command as still running after the startup silence window", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let releaseExit: () => void = () => undefined;
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    const observedPromise = observeShellCommand(
+      (async function* () {
+        await exitGate;
+        yield { type: "exit" as const, code: 0 };
+      })(),
+      { secrets: [] },
+    );
+
+    let settled = false;
+    void observedPromise.then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(SHELL_STREAM_STARTUP_SILENCE_MS - 1);
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const observed = await observedPromise;
+    expect(observed.result).toEqual({ stdout: "", stderr: "", code: null, running: true });
+    expect(observed.completion).toBeDefined();
+
+    releaseExit();
+    await expect(observed.completion).resolves.toMatchObject({ code: 0 });
+  });
+
+  it("uses the normal idle window once output arrives", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let releaseExit: () => void = () => undefined;
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    const observedPromise = observeShellCommand(
+      (async function* () {
+        yield { type: "stdout" as const, data: "hello\n" };
+        await exitGate;
+        yield { type: "exit" as const, code: 0 };
+      })(),
+      { secrets: [] },
+    );
+
+    let settled = false;
+    void observedPromise.then(() => {
+      settled = true;
+    });
+    // Startup silence is cleared on the first chunk; the normal 1s idle must win.
+    // Only the 1s idle should fire — well before the 20s startup window.
+    await vi.advanceTimersByTimeAsync(SHELL_STREAM_IDLE_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const observed = await observedPromise;
+    expect(settled).toBe(true);
+    expect(observed.result).toEqual({
+      stdout: "hello\n",
+      stderr: "",
+      code: null,
+      running: true,
+    });
+    expect(observed.completion).toBeDefined();
+
+    // Advancing the leftover startup budget must not change a result already handed off.
+    await vi.advanceTimersByTimeAsync(SHELL_STREAM_STARTUP_SILENCE_MS);
+    expect(observed.result).toMatchObject({ code: null, running: true });
+
+    releaseExit();
+    await expect(observed.completion).resolves.toMatchObject({ code: 0 });
+  });
 });
 
 describe("deliverFinishedShells", () => {
@@ -292,6 +372,58 @@ describe("deliverFinishedShells", () => {
     expect(followUps).toEqual([]);
     expect(pending).toHaveLength(1);
     release({ stdout: "ok\n", stderr: "", code: 0 });
+    await deliverFinishedShells((text) => followUps.push(text), pending, { toolResults: [] });
+    expect(followUps).toHaveLength(1);
+    expect(followUps[0]).toContain("exit code: 0");
+  });
+
+  it("returns a batch that outlives the ceiling to the queue for the next turn", async () => {
+    const previousCeiling = process.env.SANDBOX_BACKGROUND_CEILING_MS;
+    process.env.SANDBOX_BACKGROUND_CEILING_MS = "30";
+    onTestFinished(() => {
+      if (previousCeiling === undefined) delete process.env.SANDBOX_BACKGROUND_CEILING_MS;
+      else process.env.SANDBOX_BACKGROUND_CEILING_MS = previousCeiling;
+    });
+
+    const pending: Array<Promise<{ stdout: string; stderr: string; code: number }>> = [
+      new Promise(() => undefined),
+    ];
+    const followUps: string[] = [];
+    await deliverFinishedShells((text) => followUps.push(text), pending, { toolResults: [] });
+
+    expect(followUps).toEqual([]);
+    expect(pending).toHaveLength(1);
+  });
+
+  it("hands a silent long command off, then delivers its exit after the relay turn", async () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let releaseExit: () => void = () => undefined;
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    const observedPromise = observeShellCommand(
+      (async function* () {
+        await exitGate;
+        yield { type: "exit" as const, code: 0 };
+      })(),
+      { secrets: [] },
+    );
+
+    await vi.advanceTimersByTimeAsync(SHELL_STREAM_STARTUP_SILENCE_MS);
+    const observed = await observedPromise;
+    expect(isRunningShellCommand(observed.result)).toBe(true);
+
+    const pending = [observed.completion!];
+    const followUps: string[] = [];
+    await deliverFinishedShells((text) => followUps.push(text), pending, {
+      toolResults: [{ toolName: "shell", details: observed.result }],
+    });
+    expect(followUps).toEqual([]);
+
+    releaseExit();
     await deliverFinishedShells((text) => followUps.push(text), pending, { toolResults: [] });
     expect(followUps).toHaveLength(1);
     expect(followUps[0]).toContain("exit code: 0");

@@ -23,7 +23,7 @@ import {
   SandboxUnavailableError,
   WorkspaceTooLargeError,
 } from "@rakazo/adapter-kit";
-import { boundedSandboxCommandTimeoutMs } from "@rakazo/core";
+import { backgroundCommandCeilingMs, boundedSandboxCommandTimeoutMs } from "@rakazo/core";
 import { getLogger } from "@rakazo/logging";
 import { normalizeWorkspacePath, shellQuote, workspacePath } from "./computer-support.js";
 import { PORTABLE_TRANSFER_BATCH_BYTES } from "./computer-workspace.js";
@@ -85,6 +85,8 @@ interface BoxdCommandResult {
   exitCode: number;
   timedOut: boolean;
   aborted: boolean;
+  /** Soft timeout or background ceiling that actually killed the command, when timedOut. */
+  timeoutLimitMs?: number;
 }
 
 export class BoxdSandboxProvider implements SandboxProvider {
@@ -303,34 +305,68 @@ export class BoxdSandboxProvider implements SandboxProvider {
     // A command line shows in the machine's process list; values travel in a file instead.
     const environment = shellExportScript(request.env ?? {});
     const envFile = environment ? `${COMMAND_ENV}/${randomUUID()}` : undefined;
+    const pending: ProcessEvent[] = [];
+    let wake: (() => void) | undefined;
+    let runDone = false;
     let result: BoxdCommandResult | undefined;
-    try {
-      if (envFile) {
-        await this.client.machines.fs.write(id, envFile, environment, { mode: 0o600 });
+    let runError: unknown;
+    const push = (stream: "stdout" | "stderr", data: string) => {
+      if (!data) return;
+      pending.push({ type: stream, data });
+      wake?.();
+      wake = undefined;
+    };
+    const running = (async () => {
+      try {
+        if (envFile) {
+          await this.client.machines.fs.write(id, envFile, environment, { mode: 0o600 });
+        }
+        result = await this.run(id, envFile ? sourceEnvironmentCommand(envFile, argv) : argv, {
+          cwd: boxdCwd(request.cwd),
+          timeoutMs,
+          signal: context.signal,
+          onData: push,
+          detachOnTimeout: true,
+        });
+      } catch (error) {
+        runError = error;
+      } finally {
+        // The command deletes the file as it starts; this covers a command that never did.
+        if (envFile && (!result || result.timedOut || result.aborted)) {
+          await this.client.machines.fs.remove(id, envFile).catch(() => undefined);
+        }
+        runDone = true;
+        wake?.();
+        wake = undefined;
       }
-      result = await this.run(id, envFile ? sourceEnvironmentCommand(envFile, argv) : argv, {
-        cwd: boxdCwd(request.cwd),
-        timeoutMs,
-        signal: context.signal,
-      });
-    } finally {
-      // The command deletes the file as it starts; this covers a command that never did.
-      if (envFile && (!result || result.timedOut || result.aborted)) {
-        await this.client.machines.fs.remove(id, envFile).catch(() => undefined);
+    })();
+    while (!runDone || pending.length > 0) {
+      if (pending.length === 0) {
+        await new Promise<void>((resolve) => {
+          if (runDone || pending.length > 0) {
+            resolve();
+            return;
+          }
+          wake = resolve;
+        });
+        continue;
       }
+      yield pending.shift()!;
     }
+    await running;
+    if (runError) throw runError;
+    if (!result) throw new Error("boxd command produced no result");
     if (result.aborted) {
       yield { type: "stderr", data: "command aborted\n" };
       yield { type: "exit", code: 130 };
       return;
     }
-    if (result.stdout) yield { type: "stdout", data: result.stdout };
     if (result.timedOut) {
-      yield { type: "stderr", data: `command timed out after ${timeoutMs} ms\n` };
+      const limitMs = result.timeoutLimitMs ?? timeoutMs;
+      yield { type: "stderr", data: `command timed out after ${limitMs} ms\n` };
       yield { type: "exit", code: 124 };
       return;
     }
-    if (result.stderr) yield { type: "stderr", data: result.stderr };
     yield { type: "exit", code: result.exitCode };
   }
 
@@ -540,11 +576,22 @@ export class BoxdSandboxProvider implements SandboxProvider {
     }
   }
 
-  /** Runs a command line, buffering its output, until it exits, times out, or is aborted. */
+  /**
+   * Runs a command line until it exits, times out, or is aborted. Output is always buffered for
+   * the return value; when `onData` is set, each decoded chunk is also delivered as it arrives.
+   * With `detachOnTimeout`, the command is not killed at the soft timeout: the background
+   * ceiling is its whole lifetime, above or below the soft timeout.
+   */
   private async run(
     id: string,
     command: string,
-    options: { cwd?: string; timeoutMs: number; signal: AbortSignal },
+    options: {
+      cwd?: string;
+      timeoutMs: number;
+      signal: AbortSignal;
+      onData?: (stream: "stdout" | "stderr", data: string) => void;
+      detachOnTimeout?: boolean;
+    },
   ): Promise<BoxdCommandResult> {
     options.signal.throwIfAborted();
     const stream = this.client.machines.streamExec(id, {
@@ -556,6 +603,7 @@ export class BoxdSandboxProvider implements SandboxProvider {
     const stderr: Uint8Array[] = [];
     let outputBytes = 0;
     let stoppedBy: "timeout" | "abort" | "overflow" | undefined;
+    let timeoutLimitMs: number | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
     let stopped!: () => void;
     // A closed call that never reports its end still counts as stopped after a grace period.
@@ -566,25 +614,44 @@ export class BoxdSandboxProvider implements SandboxProvider {
     });
     // Closing the call makes boxd end the command's whole process group.
     const stop = (reason: NonNullable<typeof stoppedBy>) => {
-      stoppedBy ??= reason;
+      if (stoppedBy) return;
+      stoppedBy = reason;
       stream.close();
       stopped();
     };
-    const timer = setTimeout(() => stop("timeout"), options.timeoutMs);
+    // A handoff-eligible command lives for the whole background ceiling; the soft timeout
+    // only marks where the caller stops waiting, so it never kills here.
+    timeoutLimitMs = options.detachOnTimeout
+      ? backgroundCommandCeilingMs(process.env)
+      : options.timeoutMs;
+    const timer = setTimeout(() => stop("timeout"), timeoutLimitMs);
     const onAbort = () => stop("abort");
     options.signal.addEventListener("abort", onAbort, { once: true });
-    const collect = async (queue: AsyncIterable<Uint8Array>, parts: Uint8Array[]) => {
+    const collect = async (
+      queue: AsyncIterable<Uint8Array>,
+      parts: Uint8Array[],
+      name: "stdout" | "stderr",
+    ) => {
+      const decoder = options.onData ? new TextDecoder() : undefined;
       for await (const chunk of queue) {
         outputBytes += chunk.byteLength;
         if (outputBytes > MAX_OUTPUT_BYTES) return stop("overflow");
         parts.push(chunk);
+        if (decoder && options.onData) {
+          const text = decoder.decode(chunk, { stream: true });
+          if (text) options.onData(name, text);
+        }
+      }
+      if (decoder && options.onData) {
+        const text = decoder.decode();
+        if (text) options.onData(name, text);
       }
     };
     try {
       const settled = await Promise.race([
         Promise.allSettled([
-          collect(stream.stdout, stdout),
-          collect(stream.stderr, stderr),
+          collect(stream.stdout, stdout, "stdout"),
+          collect(stream.stderr, stderr, "stderr"),
           stream.wait(),
         ]),
         graceOver,
@@ -595,7 +662,15 @@ export class BoxdSandboxProvider implements SandboxProvider {
       const output = { stdout: decode(stdout), stderr: decode(stderr) };
       if (stoppedBy) {
         const aborted = stoppedBy === "abort";
-        return { ...output, exitCode: aborted ? 130 : 124, timedOut: !aborted, aborted };
+        return {
+          ...output,
+          exitCode: aborted ? 130 : 124,
+          timedOut: !aborted,
+          aborted,
+          ...(stoppedBy === "timeout" && timeoutLimitMs !== undefined
+            ? { timeoutLimitMs }
+            : {}),
+        };
       }
       const exit = settled?.[2];
       if (!exit || exit.status === "rejected") throw providerError(exit?.reason, id);
