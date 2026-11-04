@@ -3296,7 +3296,12 @@ describe("user_computer_shell", () => {
 
     f.effects[0]!.status = "approved";
     await f.run();
-    expect(f.results.at(-1)).toEqual({ stdout: "pi.local\n", stderr: "", code: 0 });
+    expect(f.results.at(-1)).toEqual({
+      stdout: "pi.local\n",
+      stderr: "",
+      code: 0,
+      computer: "laptop-ce-1",
+    });
     expect(requests.map(({ userId, request }) => [userId, request.method])).toEqual([
       ["user-1", "provision"],
       ["user-1", "environment"],
@@ -3322,7 +3327,12 @@ describe("user_computer_shell", () => {
       },
       select: { id: true },
     });
-    expect(f.results.at(-1)).toEqual({ stdout: "pi.local\n", stderr: "", code: 0 });
+    expect(f.results.at(-1)).toEqual({
+      stdout: "pi.local\n",
+      stderr: "",
+      code: 0,
+      computer: "laptop-ce-1",
+    });
     expect(f.effects.map((effect) => effect.status)).toEqual(["completed", "completed"]);
   });
 
@@ -3466,7 +3476,11 @@ describe("user computer screen control", () => {
     const text = JSON.stringify(f.results.at(-1));
     expect(text).toContain("AXTextArea");
     expect(text).not.toContain("sk-fake-secret");
-    expect(f.effects[0]!.result).toEqual({ app: "TextEdit", title: "Notes for [redacted]" });
+    expect(f.effects[0]!.result).toEqual({
+      app: "TextEdit",
+      computer: "laptop-ce-1",
+      title: "Notes for [redacted]",
+    });
 
     f.setCalls([
       {

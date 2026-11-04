@@ -5,9 +5,11 @@ import type { ToolCall } from "./run-tool-gate.js";
 import {
   userComputerCwd,
   userComputerGate,
+  userComputerObserve,
   userComputerOwner,
   userComputerShell,
 } from "./run-tools-user-computer.js";
+import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
 
 const environment = { platform: "darwin", home: "/Users/fake", shell: "/bin/zsh" };
@@ -51,6 +53,58 @@ function setup(execute: (signal: AbortSignal) => AsyncIterable<unknown>, secrets
       finish: async (result: unknown) => result,
     }) as unknown as ToolCall;
   return { ctx, call, controller, requests, signals, deviceIds, onShellStillRunning };
+}
+
+/** A gateway over several online computers, newest connection first (see connectedAll). */
+function setupDevices(
+  online: Array<{ deviceId: string; name: string; platform: string }>,
+  execute: (signal: AbortSignal) => AsyncIterable<unknown> = async function* () {
+    yield { type: "stdout", data: "ok\n" };
+    yield { type: "exit", code: 0 };
+  },
+) {
+  const controller = new AbortController();
+  const requests: HostComputerRequest[] = [];
+  const deviceIds: (string | undefined)[] = [];
+  const choices = online.map((device) => ({
+    ...device,
+    alias: computerAlias(device.name, device.deviceId),
+  }));
+  const gateway = {
+    connected: async () => choices[0] ?? null,
+    connectedAll: async () => choices,
+    connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(choices, ref),
+    pairedSince: async () => new Date(0),
+    async *request<T>(
+      _userId: string,
+      request: HostComputerRequest,
+      signal: AbortSignal,
+      deviceId?: string,
+    ) {
+      requests.push(request);
+      deviceIds.push(deviceId);
+      if (request.method === "provision") yield {} as T;
+      else if (request.method === "environment") yield environment as T;
+      else yield* execute(signal) as AsyncIterable<T>;
+    },
+  } as unknown as UserDeviceGateway;
+  const ctx = {
+    deps: { userDevices: gateway },
+    bot: { id: "bot-1" },
+    runId: "run-1",
+    source: { userComputerOwner: "user-1" },
+    context: { signal: controller.signal },
+    secrets: [],
+    computer: { acceptsImages: false },
+  } as unknown as RunContext;
+  const call = (args: Record<string, unknown>) =>
+    ({
+      name: "user_computer_shell",
+      args,
+      observer: { onShellStillRunning: vi.fn() },
+      finish: async (result: unknown) => result,
+    }) as unknown as ToolCall;
+  return { ctx, call, requests, deviceIds, choices, controller };
 }
 
 describe("userComputerGate", () => {
@@ -201,5 +255,85 @@ describe("userComputerShell", () => {
     controller.abort();
     await expect(pending).rejects.toThrow("aborted");
     expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+});
+
+describe("userComputerShell device selection", () => {
+  const online = [
+    { deviceId: "dev-desk0001", name: "Desk PC", platform: "darwin" },
+    { deviceId: "dev-lap0002", name: "MacBook", platform: "win32" },
+  ];
+
+  it("runs on the device whose alias the computer argument names", async () => {
+    const { ctx, call, requests, deviceIds } = setupDevices(online);
+    const result = (await userComputerShell(
+      ctx,
+      call({ command: "ls", computer: "macbook-0002" }),
+    )) as {
+      computer: string;
+    };
+    expect(result.computer).toBe("macbook-0002");
+    expect(deviceIds).toEqual(["dev-lap0002", "dev-lap0002", "dev-lap0002"]);
+    expect(requests.every((request) => request.botId === "bot-1")).toBe(true);
+  });
+
+  it("reports which computers are online for an unknown alias and sends no request", async () => {
+    const { ctx, call, requests, deviceIds } = setupDevices(online);
+    expect(await userComputerShell(ctx, call({ command: "ls", computer: "office-pc" }))).toEqual({
+      error:
+        'No connected computer named "office-pc". Online: desk-pc-0001 (darwin), macbook-0002 (win32), or omit computer to use the default.',
+    });
+    expect(requests).toEqual([]);
+    expect(deviceIds).toEqual([]);
+  });
+
+  it("still runs on the latest device without a computer argument", async () => {
+    const { ctx, call, deviceIds } = setupDevices(online);
+    const result = (await userComputerShell(ctx, call({ command: "ls" }))) as { computer: string };
+    expect(result.computer).toBe("desk-pc-0001");
+    expect(deviceIds).toEqual(["dev-desk0001", "dev-desk0001", "dev-desk0001"]);
+  });
+
+  it("keeps the single-device message when nothing is online, named or not", async () => {
+    const offline = setupDevices([]);
+    expect(await userComputerShell(offline.ctx, offline.call({ command: "ls" }))).toEqual({
+      error: "The user's computer is not connected. Ask them to open the Rakazo desktop app.",
+    });
+    const named = setupDevices([]);
+    expect(
+      await userComputerShell(named.ctx, named.call({ command: "ls", computer: "desk-pc-0001" })),
+    ).toEqual({
+      error: "The user's computer is not connected. Ask them to open the Rakazo desktop app.",
+    });
+    expect(offline.requests).toEqual([]);
+  });
+
+  it("falls back to the latest device on a gateway that cannot list several", async () => {
+    const { ctx, call, deviceIds } = setup(async function* () {
+      yield { type: "exit", code: 0 };
+    });
+    const result = (await userComputerShell(ctx, call({ command: "ls" }))) as { computer?: string };
+    // A gateway without connectedAll runs exactly as before, alias or not.
+    expect(result).not.toHaveProperty("error");
+    expect(deviceIds).toEqual(["device-1", "device-1", "device-1"]);
+  });
+
+  it("observes on a named device and says which one answered", async () => {
+    const { ctx, call, requests, deviceIds } = setupDevices(online, async function* () {
+      yield {
+        app: "Mail",
+        title: "Inbox",
+        tree: '- [0] AXWindow "Inbox"',
+      };
+    });
+    const result = (await userComputerObserve(
+      ctx,
+      call({ app: "Mail", computer: "macbook-0002" }),
+    )) as {
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(result.content[0]!.text).toContain('"computer":"macbook-0002"');
+    expect(deviceIds).toEqual(["dev-lap0002"]);
+    expect(requests[0]).toMatchObject({ method: "screenObserve", app: "Mail" });
   });
 });
