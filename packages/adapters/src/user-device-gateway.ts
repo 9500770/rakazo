@@ -15,6 +15,8 @@ import {
   hostComputerDeadlineMs,
   hostComputerRequest,
 } from "./host-computer-protocol.js";
+import type { UserDeviceChoice } from "./user-device-alias.js";
+import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
 import type {
   UserDevice,
   UserDeviceGateway,
@@ -540,6 +542,31 @@ export class UserDevices implements UserDeviceGateway {
   async connected(userId: string): Promise<UserDevice | null> {
     const route = await this.route(userId);
     return route && { deviceId: route.deviceId, name: route.name, platform: route.platform };
+  }
+
+  /** Every online device of the user, newest connection first, each with its alias. */
+  async connectedAll(userId: string): Promise<UserDeviceChoice[]> {
+    const connections = await runAsSystem("find a user's connected devices", () =>
+      this.deps.prisma.userDeviceConnection.findMany({
+        where: {
+          heartbeatAt: { gt: new Date(Date.now() - STALE_AFTER_MS) },
+          device: { userId, revokedAt: null },
+        },
+        orderBy: { connectedAt: "desc" },
+        include: { device: { select: { name: true, platform: true } } },
+      }),
+    );
+    return connections.map((connection) => ({
+      deviceId: connection.deviceId,
+      name: connection.device.name,
+      platform: connection.device.platform,
+      alias: computerAlias(connection.device.name, connection.deviceId),
+    }));
+  }
+
+  /** The online device a reference names, or the latest one when it is omitted; null when none. */
+  async connectedDevice(userId: string, ref?: string): Promise<UserDeviceChoice | null> {
+    return resolveUserDevice(await this.connectedAll(userId), ref);
   }
 
   /** Revokes the user's devices whose pairing sign-in ended while they were offline. */

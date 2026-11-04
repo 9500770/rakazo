@@ -479,6 +479,12 @@ export const builtinAgentTools: ConnectorTool[] = [
       properties: {
         command: { type: "string" },
         cwd: { type: "string" },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
+        },
       },
       required: ["command"],
     },
@@ -492,6 +498,12 @@ export const builtinAgentTools: ConnectorTool[] = [
       properties: {
         app: { type: "string", minLength: 1, maxLength: 200 },
         query: { type: "string", maxLength: 200 },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
+        },
       },
       required: ["app"],
     },
@@ -534,6 +546,12 @@ export const builtinAgentTools: ConnectorTool[] = [
             },
             required: ["kind"],
           },
+        },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
         },
       },
       required: ["app", "actions"],

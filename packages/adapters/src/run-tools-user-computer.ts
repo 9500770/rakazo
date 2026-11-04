@@ -25,6 +25,9 @@ import {
   USER_COMPUTER_TOOLS,
   userComputerAppName,
 } from "./user-computer-tools.js";
+import type { UserDeviceChoice } from "./user-device-alias.js";
+import { computerAlias, safeDeviceLabel, userDevicePicker } from "./user-device-alias.js";
+import type { UserDeviceGateway } from "./user-device-protocol.js";
 
 export {
   USER_COMPUTER_ACT_TOOL,
@@ -35,8 +38,14 @@ export {
   userComputerAppName,
 };
 
-/** Whether the run's owner has their desktop connected, or could connect one. */
-export type UserComputerState = "connected" | "offline" | undefined;
+/**
+ * Whether the run's owner has a desktop connected, and which of their computers are online
+ * (newest connection first). One online computer reads exactly like the single-computer past.
+ */
+export type UserComputerState =
+  | { status: "connected"; devices: UserDeviceChoice[] }
+  | { status: "offline" }
+  | undefined;
 
 const USER_COMPUTER_UNAVAILABLE =
   "The user's computer is not connected. Ask them to open the Rakazo desktop app.";
@@ -136,19 +145,64 @@ async function lastValue<T>(values: AsyncIterable<T>): Promise<T> {
   return result.value;
 }
 
-/** Checked again at execution: the desktop can disconnect or be revoked after the offer. */
-async function connectedUserComputer(ctx: RunContext) {
+/** A connected computer to run on, or the online list behind an unknown `computer` argument. */
+type ConnectedUserComputer =
+  | { owner: string; devices: UserDeviceGateway; deviceId: string; alias: string }
+  | { unknown: { online: UserDeviceChoice[]; ref: string } };
+
+/** The `computer` argument as a reference, when the model sent a usable one. */
+function computerArg(value: unknown): string | undefined {
+  const ref = typeof value === "string" ? value.trim() : "";
+  return ref ? ref.slice(0, 120) : undefined;
+}
+
+/**
+ * Checked again at execution: the desktop can disconnect or be revoked after the offer. A
+ * `computer` argument names one of the online devices; without it the latest one runs, as
+ * before. An unknown name carries the online list back, and nothing is sent to any device.
+ */
+async function connectedUserComputer(
+  ctx: RunContext,
+  ref?: string,
+): Promise<ConnectedUserComputer | undefined> {
   const owner = ctx.source.userComputerOwner;
   const devices = ctx.deps.userDevices;
-  const device = owner && devices ? await devices.connected(owner).catch(() => null) : null;
-  return owner && devices && device ? { owner, devices, deviceId: device.deviceId } : undefined;
+  if (!owner || !devices) return undefined;
+  const picker = userDevicePicker(devices);
+  const device = picker
+    ? await picker.connectedDevice(owner, ref).catch(() => null)
+    : await devices.connected(owner).catch(() => null);
+  if (device)
+    return {
+      owner,
+      devices,
+      deviceId: device.deviceId,
+      alias: computerAlias(device.name, device.deviceId),
+    };
+  // A name that matched nothing is told which computers are online. With none online, the
+  // ordinary unavailable message applies whether or not one was named.
+  if (ref && picker) {
+    const online = await picker.connectedAll(owner).catch(() => []);
+    if (online.length) return { unknown: { online, ref } };
+  }
+  return undefined;
+}
+
+/** Which computer the model could have named, as the error hands back. */
+function unknownComputerError(unknown: { online: UserDeviceChoice[]; ref: string }): string {
+  const online = unknown.online
+    .map((device) => `${device.alias} (${safeDeviceLabel(device.platform)})`)
+    .join(", ");
+  return `No connected computer named "${unknown.ref}". Online: ${online}, or omit computer to use the default.`;
 }
 
 export async function userComputerShell(ctx: RunContext, call: ToolCall) {
   const { bot, runId } = ctx;
-  const connected = await connectedUserComputer(ctx);
+  const connected = await connectedUserComputer(ctx, computerArg(call.args.computer));
   if (!connected) return call.finish({ error: USER_COMPUTER_UNAVAILABLE });
-  const { owner, devices, deviceId } = connected;
+  if ("unknown" in connected)
+    return call.finish({ error: unknownComputerError(connected.unknown) });
+  const { owner, devices, deviceId, alias } = connected;
   const { signal } = ctx.context;
   const command = String(call.args.command ?? "");
   try {
@@ -182,9 +236,13 @@ export async function userComputerShell(ctx: RunContext, call: ToolCall) {
       ),
       { secrets: ctx.secrets },
     );
-    if (!observed.completion) return call.finish(observed.result);
+    if (!observed.completion) return call.finish({ ...observed.result, computer: alias });
     void observed.completion.catch(() => undefined);
-    const returned = await call.finish({ ...observed.result, notice: SHELL_STILL_RUNNING_NOTICE });
+    const returned = await call.finish({
+      ...observed.result,
+      computer: alias,
+      notice: SHELL_STILL_RUNNING_NOTICE,
+    });
     if (isRunningShellCommand(returned)) call.observer?.onShellStillRunning?.(observed.completion);
     return returned;
   } catch (error) {
@@ -229,9 +287,11 @@ type ScreenRequest =
 /** The device gets the app name the approval card showed, never the raw argument. */
 async function userComputerScreen(ctx: RunContext, call: ToolCall, request: ScreenRequest) {
   if (!request.app) return call.finish({ error: "app must name an app on the user's computer." });
-  const connected = await connectedUserComputer(ctx);
+  const connected = await connectedUserComputer(ctx, computerArg(call.args.computer));
   if (!connected) return call.finish({ error: USER_COMPUTER_UNAVAILABLE });
-  const { owner, devices, deviceId } = connected;
+  if ("unknown" in connected)
+    return call.finish({ error: unknownComputerError(connected.unknown) });
+  const { owner, devices, deviceId, alias } = connected;
   const { signal } = ctx.context;
   try {
     const value = await lastValue(
@@ -243,7 +303,7 @@ async function userComputerScreen(ctx: RunContext, call: ToolCall, request: Scre
       ),
     );
     if (request.method === "screenObserve")
-      return call.finish(screenToolResult(ctx, value as HostScreenObservation, "observed"));
+      return call.finish(screenToolResult(ctx, value as HostScreenObservation, "observed", alias));
     const acted = value as HostScreenActResult;
     const total = request.actions.length;
     const note = `completed ${acted.completed} of ${total} action${total === 1 ? "" : "s"}${
@@ -251,8 +311,12 @@ async function userComputerScreen(ctx: RunContext, call: ToolCall, request: Scre
     }`;
     return call.finish(
       acted.observation
-        ? screenToolResult(ctx, acted.observation, note)
-        : { completed: acted.completed, ...(acted.error ? { error: note } : {}) },
+        ? screenToolResult(ctx, acted.observation, note, alias)
+        : {
+            completed: acted.completed,
+            computer: alias,
+            ...(acted.error ? { error: note } : {}),
+          },
     );
   } catch (error) {
     if (signal.aborted) throw error;
@@ -269,10 +333,12 @@ function screenToolResult(
   ctx: RunContext,
   observation: HostScreenObservation,
   note: string,
+  computer: string,
 ): AgentToolExecutionResult {
   const image = ctx.computer.acceptsImages ? observation.image : undefined;
   const details = {
     app: observation.app,
+    computer,
     ...(observation.title ? { title: redactSecrets(observation.title, ctx.secrets) } : {}),
     ...(image ? { width: image.width, height: image.height } : {}),
   };

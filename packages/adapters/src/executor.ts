@@ -223,6 +223,7 @@ import {
 import { loadAgentTicketContext } from "./ticket-context.js";
 import { appendToolCompletionAudit } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
+import { onlineUserComputers } from "./user-device-alias.js";
 import { createWebProvider } from "./web-provider-factory.js";
 
 /** Same reach as the MCP connector: usable servers assigned to the bot or shared with every bot. */
@@ -1200,12 +1201,13 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           deps.userDevices &&
           !disabledBuiltinTools.has(USER_COMPUTER_SHELL_TOOL)
         ) {
-          const device = await deps.userDevices.connected(userComputerOwnerId).catch(() => null);
-          if (device) {
-            userComputer = "connected";
-            // The macOS and Windows desktops fetch a screen driver; Linux has none yet.
-            userComputerScreen = device.platform === "darwin" || device.platform === "win32";
-          } else userComputer = "offline";
+          const onlineDevices = await onlineUserComputers(deps.userDevices, userComputerOwnerId);
+          userComputer = onlineDevices.length
+            ? { status: "connected", devices: onlineDevices }
+            : { status: "offline" };
+          // The macOS and Windows desktops fetch a screen driver; Linux has none yet.
+          userComputerScreen =
+            onlineDevices[0]?.platform === "darwin" || onlineDevices[0]?.platform === "win32";
         }
         const builtins = [
           ...selectBuiltinToolsForRun({
@@ -1227,7 +1229,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             disabledBuiltinTools: bot.disabledBuiltinTools,
             fleetManagement: bot.fleetManagement,
             followUpFromUser: sourceMessage?.role === "user",
-            userComputer: userComputer === "connected",
+            userComputer: userComputer?.status === "connected",
             userComputerScreen,
           }),
           // Cross-owner agent connections only exist for chat-linked bots.
