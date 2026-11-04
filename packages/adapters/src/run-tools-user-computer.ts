@@ -17,7 +17,7 @@ import {
   observeShellCommand,
   SHELL_STILL_RUNNING_NOTICE,
 } from "./shell-command-stream.js";
-import { userComputerApprovalMode } from "./user-computer-approval.js";
+import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
 import {
   USER_COMPUTER_ACT_TOOL,
   USER_COMPUTER_OBSERVE_TOOL,
@@ -91,10 +91,15 @@ export async function userComputerGate(
   const { deps, run } = ctx;
   const pairedSince = await deps.userDevices?.pairedSince(run.userId);
   if (!pairedSince) return "ask";
+  // An expiring grant: only approvals recorded inside the window count, so access given for one
+  // task ends on its own instead of lasting as long as the pairing.
+  const ttl = userComputerGrantTtlMs();
+  const since =
+    ttl === undefined ? pairedSince : new Date(Math.max(pairedSince.getTime(), Date.now() - ttl));
   const where = {
     spaceId: run.spaceId,
     status: { in: ["approved", "executing", "completed", "uncertain"] },
-    createdAt: { gte: pairedSince },
+    createdAt: { gte: since },
     run: { userId: run.userId },
   };
   if (!USER_COMPUTER_SCREEN_TOOLS.has(name)) {

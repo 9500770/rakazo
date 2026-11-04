@@ -12,12 +12,24 @@ import {
   toolRequiresExplicitApproval,
 } from "@rakazo/core";
 import { urlSite } from "@rakazo/core/egress";
+import { userComputerApprovalMode } from "./user-computer-approval.js";
 import { USER_COMPUTER_SCREEN_TOOLS, userComputerAppName } from "./user-computer-tools.js";
 
 export const MAX_APPROVAL_SUMMARY_LENGTH = 500;
 export const MAX_APPROVAL_DETAIL_LENGTH = 4_000;
 /** Longer fetch URLs are refused, so an approval card always shows the whole URL it sends. */
 export const MAX_FETCH_URL_LENGTH = 2_048;
+
+/**
+ * The buttons on a user's-computer approval. Under `always` the space grant is never consulted,
+ * so the card offers a single run instead of a button that would quietly do nothing.
+ */
+function userComputerAskActions() {
+  const deny = { id: "deny", label: "Deny" };
+  return userComputerApprovalMode() === "always"
+    ? [{ id: "allow", label: "Allow once" }, deny]
+    : [{ id: "allow", label: "Allow in this space" }, deny];
+}
 
 /** A fleet card built from the resolved request: a title and the lines under it. */
 /** `onceOnly`: the card never offers Always allow, as for a purchase. */
@@ -130,10 +142,7 @@ export function buildApprovalAskBlock(
           }
         : {}),
       status: "pending",
-      actions: [
-        { id: "allow", label: "Allow in this space" },
-        { id: "deny", label: "Deny" },
-      ],
+      actions: userComputerAskActions(),
     };
   }
   if (toolName === "user_computer_shell") {
@@ -148,10 +157,7 @@ export function buildApprovalAskBlock(
       ),
       detailFormat: "code",
       status: "pending",
-      actions: [
-        { id: "allow", label: "Allow in this space" },
-        { id: "deny", label: "Deny" },
-      ],
+      actions: userComputerAskActions(),
     };
   }
   const fetchSite = webFetchSite(toolName, args);

@@ -9,7 +9,7 @@ import {
   userComputerOwner,
   userComputerShell,
 } from "./run-tools-user-computer.js";
-import { userComputerApprovalMode } from "./user-computer-approval.js";
+import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
 import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
 
@@ -144,6 +144,18 @@ describe("userComputerApprovalMode", () => {
   });
 });
 
+describe("userComputerGrantTtlMs", () => {
+  it("reads an expiring grant window in minutes and ignores values it cannot use", () => {
+    expect(userComputerGrantTtlMs({})).toBeUndefined();
+    expect(userComputerGrantTtlMs({ RAKAZO_USER_COMPUTER_GRANT_TTL: "30" })).toBe(30 * 60_000);
+    expect(userComputerGrantTtlMs({ RAKAZO_USER_COMPUTER_GRANT_TTL: "0" })).toBeUndefined();
+    expect(userComputerGrantTtlMs({ RAKAZO_USER_COMPUTER_GRANT_TTL: "soon" })).toBeUndefined();
+    expect(userComputerGrantTtlMs({ RAKAZO_USER_COMPUTER_GRANT_TTL: "9999" })).toBe(
+      24 * 60 * 60_000,
+    );
+  });
+});
+
 describe("userComputerGate approval mode", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -184,6 +196,28 @@ describe("userComputerGate approval mode", () => {
     await expect(
       userComputerGate(ctx, true, "user_computer_shell", { command: "ls" }),
     ).resolves.toBe("deny");
+  });
+
+  it("counts only approvals inside the grant window when one is set", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_GRANT_TTL", "30");
+    const findFirst = vi.fn(async (_args: unknown) => null);
+    const ctx = {
+      deps: {
+        userDevices: { pairedSince: async () => new Date(0) },
+        prisma: { externalEffect: { findFirst, findMany: vi.fn(async () => []) } },
+      },
+      run: { spaceId: "space-1", userId: "user-1" },
+    } as unknown as RunContext;
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("ask");
+    const where = (
+      findFirst.mock.calls[0]?.[0] as { where: { createdAt: { gte: Date } } } | undefined
+    )?.where;
+    if (!where) throw new Error("the gate looked up earlier approvals");
+    const age = Date.now() - where.createdAt.gte.getTime();
+    expect(age).toBeGreaterThan(29 * 60_000);
+    expect(age).toBeLessThan(31 * 60_000);
   });
 
   it("asks once per app in ask mode, the default", async () => {
