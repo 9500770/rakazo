@@ -1,3 +1,4 @@
+import { approvalModeFromPreference } from "@rakazo/core";
 import { z } from "zod";
 import type { RunContext } from "./run-context.js";
 import { isRunTainted, refuseOwnerSettingsChange } from "./run-context.js";
@@ -22,7 +23,7 @@ import {
 export { USER_COMPUTER_POLICY_TOOL };
 
 const input = z.object({
-  action: z.enum(["list", "allow", "ask", "revoke"]),
+  action: z.enum(["list", "allow", "ask", "auto", "revoke"]),
   computer: z.string().max(120).optional(),
   minutes: z
     .number()
@@ -105,10 +106,25 @@ export async function userComputerPolicy(ctx: RunContext, call: ToolCall) {
       where: { botId: target.id },
       select: { deviceKey: true, mode: true, expiresAt: true },
     });
-    return call.finish({ text: describePolicies(target.name, online, rows) });
+    return call.finish({
+      text: describePolicies(target.name, online, rows, await spaceApprovalMode(ctx)),
+    });
   }
 
   const deviceKey = choice?.deviceId ?? USER_COMPUTER_POLICY_ALL;
+  // Auto is the default: drop the row so the space's path decides again, and the judge
+  // reviews each call. It is what a computer shows when nothing was ever written.
+  if (action === "auto") {
+    const { count } = await store.deleteMany({
+      where: { botId: target.id, ...(choice ? { deviceKey: choice.deviceId } : {}) },
+    });
+    const where = choice ? computerLabel(choice, computer) : "every computer";
+    return call.finish({
+      text: count
+        ? `${target.name} on ${where}: auto. The space's approval path decides, judging each call.`
+        : `${target.name} on ${where}: already auto.`,
+    });
+  }
   if (action === "revoke") {
     const { count } = await store.deleteMany({
       where: { botId: target.id, ...(choice ? { deviceKey: choice.deviceId } : {}) },
@@ -156,20 +172,38 @@ async function targetBot(
   return bot ?? undefined;
 }
 
+/**
+ * The mode a computer with no policy row falls back to. A real desktop is never "never":
+ * run-tool-gate.ts remaps a space that never asks onto Auto's judge (see userComputerGate).
+ */
+async function spaceApprovalMode(ctx: RunContext): Promise<string> {
+  const load = (
+    ctx.trust as {
+      loadAutoReviewPreference?: () => Promise<{ enabled: boolean; skipApprovals: boolean }>;
+    }
+  ).loadAutoReviewPreference;
+  if (typeof load !== "function") return "auto";
+  const mode = approvalModeFromPreference(await load.call(ctx.trust));
+  return mode === "never" ? "auto" : mode;
+}
+
 function describePolicies(
   bot: string,
   online: readonly UserDeviceChoice[],
   rows: readonly UserComputerPolicyRow[],
+  fallback: string,
 ): string {
   const lines = [`${bot}:`];
   const all = rows.find((row) => row.deviceKey === USER_COMPUTER_POLICY_ALL);
-  lines.push(`every computer: ${all ? describeUserComputerPolicy(all) : "ask"}`);
+  // No row is not "ask": it means the space's path decides, which on a real desktop is
+  // Auto's judge. Printing "ask" claimed every call would show a card when none did.
+  lines.push(`every computer: ${all ? describeUserComputerPolicy(all) : fallback}`);
   for (const device of online) {
     // A row for this computer wins; otherwise the row for all of them is what applies.
     const row = rows.find((candidate) => candidate.deviceKey === device.deviceId) ?? all;
     lines.push(
       `${computerAlias(device.name, device.deviceId)} (${safeDeviceLabel(device.platform)}): ${
-        row ? describeUserComputerPolicy(row) : "ask"
+        row ? describeUserComputerPolicy(row) : fallback
       }`,
     );
   }

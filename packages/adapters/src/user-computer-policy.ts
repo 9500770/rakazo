@@ -58,9 +58,10 @@ export function describeUserComputerPolicy(
   row: Pick<UserComputerPolicyRow, "mode" | "expiresAt">,
   now: Date = new Date(),
 ): string {
-  if (!isUserComputerPolicyMode(row.mode)) return "ask";
+  // An unreadable or expired row is the same as no row: the space decides, not "ask".
+  if (!isUserComputerPolicyMode(row.mode)) return "auto";
   if (row.mode === "ask") return "ask";
   if (!row.expiresAt) return "allow until revoked";
   const minutes = Math.ceil((row.expiresAt.getTime() - now.getTime()) / 60_000);
-  return minutes > 0 ? `allow for ${minutes}m` : "ask";
+  return minutes > 0 ? `allow for ${minutes}m` : "auto";
 }

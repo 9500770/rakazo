@@ -72,6 +72,50 @@ describe("userComputerPolicy", () => {
     );
   });
 
+  it("lists auto, not ask, for computers no row covers", async () => {
+    const { ctx, call } = setup();
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toBe(
+      [
+        "Chief:",
+        "every computer: auto",
+        `${choices[0]!.alias} (darwin): auto`,
+        `${choices[1]!.alias} (win32): auto`,
+      ].join("\n"),
+    );
+  });
+
+  it("lists the split to the space mode when the space asks", async () => {
+    const { ctx, call } = setup();
+    (ctx.trust as { loadAutoReviewPreference?: unknown }).loadAutoReviewPreference = async () => ({
+      enabled: false,
+      skipApprovals: false,
+    });
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toContain("every computer: ask");
+  });
+
+  it("clears the row on auto and says when nothing was set", async () => {
+    const granted = setup();
+    const first = (await userComputerPolicy(
+      granted.ctx,
+      granted.call({ action: "auto", computer: choices[0]!.alias }),
+    )) as { text: string };
+    expect(granted.deleteMany).toHaveBeenCalledWith({
+      where: { botId: "bot-1", deviceKey: "device-1" },
+    });
+    expect(granted.upsert).not.toHaveBeenCalled();
+    expect(first.text).toContain("auto");
+
+    const empty = setup();
+    empty.deleteMany.mockResolvedValue({ count: 0 });
+    const second = (await userComputerPolicy(
+      empty.ctx,
+      empty.call({ action: "auto" }),
+    )) as { text: string };
+    expect(second.text).toContain("already auto");
+  });
+
   it("writes one bot's policy for the computer it names, with its own expiry", async () => {
     const { ctx, call, upsert } = setup();
     const result = (await userComputerPolicy(

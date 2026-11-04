@@ -57,7 +57,7 @@ describe("describeUserComputerPolicy", () => {
         now,
       ),
     ).toBe("allow for 90m");
-    expect(describeUserComputerPolicy({ mode: "allow", expiresAt: now }, now)).toBe("ask");
+    expect(describeUserComputerPolicy({ mode: "allow", expiresAt: now }, now)).toBe("auto");
     expect(describeUserComputerPolicy({ mode: "ask", expiresAt: null }, now)).toBe("ask");
   });
 });
