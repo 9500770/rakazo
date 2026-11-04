@@ -3316,13 +3316,14 @@ describe("user_computer_shell", () => {
     f.setCalls([call("ssh pi.local uptime", "call-2")]);
     await f.run();
     expect(f.pauseRunForInput).toHaveBeenCalledOnce();
-    // Any chat of this user in this space counts, not just this one.
+    // Any chat of this user with this bot in this space counts, not just this one; a grant given
+    // to another bot is not this bot's.
     expect(f.prisma.externalEffect.findFirst).toHaveBeenLastCalledWith({
       where: {
         spaceId: "space-1",
         status: { in: ["approved", "executing", "completed", "uncertain"] },
         createdAt: { gte: new Date(0) },
-        run: { userId: "user-1" },
+        run: { userId: "user-1", botId: "bot-1" },
         kind: "user_computer_shell",
       },
       select: { id: true },

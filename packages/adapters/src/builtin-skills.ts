@@ -65,6 +65,17 @@ const SKILLS: Array<{ name: string; description: string; body: string }> = [
 
 ${RAKAZO_DOCS.map(([topics, url]) => `- ${topics}: ${url}`).join("\n")}`,
   },
+  {
+    name: "PC",
+    description: "See or set which computers this bot may use without asking.",
+    body: `Change computer permissions with the user_computer_policy tool (call find_tool first if its schema is not loaded). One call per command:
+- list, no arguments: every computer and this bot's mode on each. No policy means the bot asks.
+- allow, with computer (an alias from the list) and optionally minutes: use that computer without asking for that long; without minutes, until revoked. Omit computer for every computer.
+- ask, with computer: ask again before using it.
+- revoke, with or without computer: drop the policy now.
+
+A policy is per bot and per computer, so allowing one bot on one computer leaves every other combination asking. Add bot (name or id) to change another bot in this space. Report the tool's reply in one sentence and never claim a change it did not confirm.`,
+  },
 ];
 
 export const BUILTIN_AGENT_SKILLS: Array<{

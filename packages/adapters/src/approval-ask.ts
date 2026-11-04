@@ -145,6 +145,33 @@ export function buildApprovalAskBlock(
       actions: userComputerAskActions(),
     };
   }
+  if (toolName === "user_computer_policy") {
+    const action = String(args.action ?? "");
+    const where =
+      typeof args.computer === "string" && args.computer.trim()
+        ? args.computer.trim()
+        : "every computer";
+    const minutes = typeof args.minutes === "number" ? args.minutes : undefined;
+    const text =
+      action === "allow"
+        ? `Run on ${where} without asking?`
+        : action === "revoke"
+          ? `Take back access to ${where}?`
+          : `Ask before using ${where}?`;
+    return {
+      kind: "ask",
+      approvalEffectId: effectId,
+      text,
+      ...(action === "allow"
+        ? { detail: minutes ? `For ${minutes} minutes` : "Until revoked" }
+        : {}),
+      status: "pending",
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    };
+  }
   if (toolName === "user_computer_shell") {
     const cwd = typeof args.cwd === "string" && args.cwd.trim() ? `cd ${args.cwd.trim()}\n` : "";
     return {

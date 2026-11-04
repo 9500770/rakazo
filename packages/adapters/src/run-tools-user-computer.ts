@@ -18,9 +18,12 @@ import {
   SHELL_STILL_RUNNING_NOTICE,
 } from "./shell-command-stream.js";
 import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
+import { activeUserComputerPolicy, USER_COMPUTER_POLICY_ALL } from "./user-computer-policy.js";
+import { userComputerPolicyStore } from "./user-computer-policy-store.js";
 import {
   USER_COMPUTER_ACT_TOOL,
   USER_COMPUTER_OBSERVE_TOOL,
+  USER_COMPUTER_POLICY_TOOL,
   USER_COMPUTER_SCREEN_TOOLS,
   USER_COMPUTER_SHELL_TOOL,
   USER_COMPUTER_TOOLS,
@@ -33,6 +36,7 @@ import type { UserDeviceGateway } from "./user-device-protocol.js";
 export {
   USER_COMPUTER_ACT_TOOL,
   USER_COMPUTER_OBSERVE_TOOL,
+  USER_COMPUTER_POLICY_TOOL,
   USER_COMPUTER_SCREEN_TOOLS,
   USER_COMPUTER_SHELL_TOOL,
   USER_COMPUTER_TOOLS,
@@ -83,6 +87,10 @@ export async function userComputerGate(
   args: Record<string, unknown>,
 ): Promise<"deny" | "allow" | "ask"> {
   if (blocked) return "deny";
+  // An explicit row for this bot and computer beats everything else: it is what /PC wrote, and
+  // the only place a person widens one combination without widening the rest.
+  const policy = await userComputerPolicyFor(ctx, args);
+  if (policy) return policy;
   // The owner's own computers follow their own mode (see user-computer-approval.ts): a sandbox may
   // run unattended, a real desktop may be told to ask every time.
   const mode = userComputerApprovalMode();
@@ -100,7 +108,8 @@ export async function userComputerGate(
     spaceId: run.spaceId,
     status: { in: ["approved", "executing", "completed", "uncertain"] },
     createdAt: { gte: since },
-    run: { userId: run.userId },
+    // One bot's "Allow in this space" is not another bot's.
+    run: { userId: run.userId, ...(ctx.bot?.id ? { botId: ctx.bot.id } : {}) },
   };
   if (!USER_COMPUTER_SCREEN_TOOLS.has(name)) {
     const allowed = await deps.prisma.externalEffect.findFirst({
@@ -132,6 +141,36 @@ export async function userComputerGate(
     if (page.length < SCREEN_APPROVAL_PAGE) return "ask";
     cursor = page.at(-1)!.id;
   }
+}
+
+/**
+ * The mode this bot's own row names for the computer a call targets, or undefined when no row
+ * applies. The row for one computer wins over the row for all of them; an expired row is ignored.
+ */
+async function userComputerPolicyFor(
+  ctx: RunContext,
+  args: Record<string, unknown>,
+): Promise<"ask" | "allow" | undefined> {
+  const owner = ctx.source?.userComputerOwner;
+  const devices = ctx.deps.userDevices;
+  const store = userComputerPolicyStore(ctx.deps.prisma);
+  if (!owner || !devices || !store || !ctx.bot?.id) return undefined;
+  const picker = userDevicePicker(devices);
+  const device = picker
+    ? await picker.connectedDevice(owner, computerArg(args.computer)).catch(() => null)
+    : null;
+  const rows = await store
+    .findMany({
+      where: {
+        botId: ctx.bot.id,
+        deviceKey: {
+          in: device ? [device.deviceId, USER_COMPUTER_POLICY_ALL] : [USER_COMPUTER_POLICY_ALL],
+        },
+      },
+      select: { deviceKey: true, mode: true, expiresAt: true },
+    })
+    .catch(() => []);
+  return activeUserComputerPolicy(rows, device?.deviceId);
 }
 
 const SCREEN_APPROVAL_PAGE = 200;

@@ -73,6 +73,7 @@ model User {
   signupSurvey                SignupSurvey?
   computerRuns                ComputerRun[]
   devices                     UserDevice[]
+  userComputerPolicies        UserComputerPolicy[]
 
   @@unique([email])
   @@map("user")
@@ -180,6 +181,31 @@ model UserDeviceConnection {
 
   @@index([heartbeatAt])
   @@map("user_device_connections")
+}
+
+/// How one bot may use one of its owner's paired computers. No row means "ask", the safe
+/// default; a row for one computer beats the row for all of them. Grants may expire on their
+/// own, so access given for one task is taken back without anyone remembering to revoke it.
+model UserComputerPolicy {
+  id        String   @id @default(cuid())
+  spaceId   String
+  space     Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  botId     String
+  bot       Bot      @relation(fields: [botId], references: [id], onDelete: Cascade)
+  /// The paired computer's id, or "*" for every computer of the owner.
+  deviceKey String
+  /// "allow" runs without asking; "ask" holds one computer back while "*" allows the rest.
+  mode      String
+  /// When the row stops counting; null keeps it until changed.
+  expiresAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([botId, deviceKey])
+  @@index([spaceId, userId])
+  @@map("user_computer_policies")
 }
 
 model Account {
@@ -469,6 +495,7 @@ model Space {
   agentSkillSpaces            AgentSkillSpace[]
   mcpServerSpaces             McpServerSpace[]
   capabilityInstallSpaces     CapabilityInstallSpace[]
+  userComputerPolicies        UserComputerPolicy[]
 
   @@unique([id, organizationId])
   @@index([organizationId, createdAt])
@@ -785,6 +812,7 @@ model Bot {
   ticketComments    TicketComment[]   @relation("TicketCommentAuthorBot")
 
   externalConversations ExternalConversation[]
+  userComputerPolicies UserComputerPolicy[]
 
   @@unique([spaceId, spawnKey])
   @@index([spaceId, userId, archivedAt, pinned, updatedAt])

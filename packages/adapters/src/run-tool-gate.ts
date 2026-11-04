@@ -76,6 +76,10 @@ import type { ToolRequest } from "./run-tool-request.js";
 import { BUILTIN_AGENT_TOOL_NAMES, READ_ONLY_AGENT_TOOLS } from "./run-tool-selection.js";
 import { callMediaTool } from "./run-tools-files.js";
 import { USER_COMPUTER_TOOLS, userComputerGate } from "./run-tools-user-computer.js";
+import {
+  USER_COMPUTER_POLICY_TOOL,
+  userComputerPolicyGate,
+} from "./run-tools-user-computer-policy.js";
 import { connectorTrustKeys } from "./run-trust.js";
 import { watchFromTool } from "./schedule-tools.js";
 
@@ -318,20 +322,23 @@ export async function gateToolCall(
         : false));
   const plan = USER_COMPUTER_TOOLS.has(name)
     ? await userComputerGate(ctx, approvalResolved.decision === "deny", name, args)
-    : planActionGate({
-        resolved: approvalResolved,
-        mode,
-        mandatory: requiresMandatoryApproval,
-        steerable:
-          guardedInNeverAsk && mode === "never"
-            ? !ctx.source.ownerStartedRun || (await isRunTainted(ctx))
-            : undefined,
-        consequential: requiresApprovalByDefault,
-        reviewOnly: connectorReadGated,
-        checkerConfigured,
-        newDestination: siteGate === "new",
-        purchase: paying,
-      });
+    : name === USER_COMPUTER_POLICY_TOOL
+      ? // Reading the policy is not a change; every other action always shows a card.
+        userComputerPolicyGate(approvalResolved.decision === "deny", args)
+      : planActionGate({
+          resolved: approvalResolved,
+          mode,
+          mandatory: requiresMandatoryApproval,
+          steerable:
+            guardedInNeverAsk && mode === "never"
+              ? !ctx.source.ownerStartedRun || (await isRunTainted(ctx))
+              : undefined,
+          consequential: requiresApprovalByDefault,
+          reviewOnly: connectorReadGated,
+          checkerConfigured,
+          newDestination: siteGate === "new",
+          purchase: paying,
+        });
   // Nobody is there to approve a purchase a webhook run reaches.
   if (paying && run.trigger === "webhook" && plan !== "deny") {
     await auditToolCall(ctx, name, "denied", { reason: "purchase_unattended" });

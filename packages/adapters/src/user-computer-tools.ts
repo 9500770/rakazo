@@ -3,6 +3,8 @@
 export const USER_COMPUTER_SHELL_TOOL = "user_computer_shell";
 export const USER_COMPUTER_OBSERVE_TOOL = "user_computer_observe";
 export const USER_COMPUTER_ACT_TOOL = "user_computer_act";
+/** Sees or changes one bot's policy for one of the user's computers (see /PC). */
+export const USER_COMPUTER_POLICY_TOOL = "user_computer_policy";
 /** Both look at or drive one app, so one approval covers that app for the chat. */
 export const USER_COMPUTER_SCREEN_TOOLS: ReadonlySet<string> = new Set([
   USER_COMPUTER_OBSERVE_TOOL,

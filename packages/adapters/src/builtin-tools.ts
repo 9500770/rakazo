@@ -558,6 +558,34 @@ export const builtinAgentTools: ConnectorTool[] = [
     },
   },
   {
+    name: "user_computer_policy",
+    description:
+      "See or set whether this bot may use the user's computers without asking. One policy per bot and computer; without one the bot asks. Grants can expire.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "allow", "ask", "revoke"] },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description: "alias of the computer; omit to cover every computer",
+        },
+        minutes: {
+          type: "integer",
+          minimum: 1,
+          maximum: 43200,
+          description: "how long an allow lasts; omit to keep it until revoked",
+        },
+        bot: {
+          type: "string",
+          maxLength: 200,
+          description: "another bot in this space by name or id; omit for this bot",
+        },
+      },
+      required: ["action"],
+    },
+  },
+  {
     name: "open_path",
     description:
       "Open a workspace file or an http(s) URL in its default graphical application on this bot's computer and return the resulting screen.",

@@ -442,3 +442,100 @@ describe("userComputerShell device selection", () => {
     expect(requests[0]).toMatchObject({ method: "screenObserve", app: "Mail" });
   });
 });
+
+describe("userComputerGate policy rows", () => {
+  const choices = [
+    { deviceId: "device-1", name: "Laptop", platform: "darwin" },
+    { deviceId: "device-2", name: "Office PC", platform: "win32" },
+  ].map((device) => ({ ...device, alias: computerAlias(device.name, device.deviceId) }));
+
+  function policyContext(
+    rows: Array<{ deviceKey: string; mode: string; expiresAt: Date | null }>,
+    withStore = true,
+  ) {
+    const findMany = vi.fn(async (_args: unknown) => rows);
+    const findFirst = vi.fn(async (_args: unknown) => null);
+    const gateway = {
+      connected: async () => choices[0],
+      connectedAll: async () => choices,
+      connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(choices, ref),
+      pairedSince: async () => new Date(0),
+    } as unknown as UserDeviceGateway;
+    const ctx = {
+      deps: {
+        userDevices: gateway,
+        prisma: {
+          ...(withStore
+            ? {
+                userComputerPolicy: {
+                  findMany,
+                  upsert: vi.fn(async () => ({})),
+                  deleteMany: vi.fn(async () => ({ count: 0 })),
+                },
+              }
+            : {}),
+          externalEffect: { findFirst, findMany: vi.fn(async () => []) },
+        },
+      },
+      bot: { id: "bot-1" },
+      run: { spaceId: "space-1", userId: "user-1" },
+      source: { userComputerOwner: "user-1" },
+    } as unknown as RunContext;
+    return { ctx, findMany, findFirst };
+  }
+
+  it("runs where this bot's row allows that computer", async () => {
+    const { ctx, findMany } = policyContext([
+      { deviceKey: "device-1", mode: "allow", expiresAt: null },
+    ]);
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("allow");
+    expect(
+      (findMany.mock.calls[0]?.[0] as { where: { botId: string } } | undefined)?.where.botId,
+    ).toBe("bot-1");
+  });
+
+  it("keeps another computer asking when only one row allows", async () => {
+    const { ctx } = policyContext([{ deviceKey: "device-1", mode: "allow", expiresAt: null }]);
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", {
+        command: "ls",
+        computer: choices[1]!.alias,
+      }),
+    ).resolves.toBe("ask");
+  });
+
+  it("lets a row for one computer hold back a row for all of them", async () => {
+    const rows = [
+      { deviceKey: "*", mode: "allow", expiresAt: null },
+      { deviceKey: "device-2", mode: "ask", expiresAt: null },
+    ];
+    const { ctx } = policyContext(rows);
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("allow");
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", {
+        command: "ls",
+        computer: choices[1]!.alias,
+      }),
+    ).resolves.toBe("ask");
+  });
+
+  it("ignores a grant that has expired", async () => {
+    const { ctx } = policyContext([
+      { deviceKey: "device-1", mode: "allow", expiresAt: new Date(Date.now() - 60_000) },
+    ]);
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("ask");
+  });
+
+  it("counts an earlier space grant only for the bot that was allowed", async () => {
+    const { ctx, findFirst } = policyContext([], false);
+    await userComputerGate(ctx, false, "user_computer_shell", { command: "ls" });
+    const where = (findFirst.mock.calls[0]?.[0] as { where: { run: unknown } } | undefined)?.where;
+    expect(where?.run).toEqual({ userId: "user-1", botId: "bot-1" });
+  });
+});

@@ -15,6 +15,7 @@ import {
   SCHEDULE_TOOL_NAMES,
 } from "./schedule-tools.js";
 import { SKILL_TOOL_NAMES } from "./skill-tools.js";
+import { USER_COMPUTER_POLICY_TOOL } from "./user-computer-tools.js";
 
 export const READ_ONLY_AGENT_TOOLS = new Set([
   "computer_observe",
@@ -128,6 +129,7 @@ export function selectBuiltinToolsForRun(options: {
         ].includes(tool.name)) &&
       (options.voiceCall || tool.name !== "end_call") &&
       (options.userComputer || tool.name !== "user_computer_shell") &&
+      (options.userComputer || tool.name !== USER_COMPUTER_POLICY_TOOL) &&
       ((options.userComputer && options.userComputerScreen) ||
         !USER_COMPUTER_SCREEN_TOOLS.has(tool.name)) &&
       // Already on a call, or reached through a messaging channel that cannot ring.
