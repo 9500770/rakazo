@@ -10,15 +10,21 @@ const choices = [
   { deviceId: "device-2", name: "Office PC", platform: "win32" },
 ].map((device) => ({ ...device, alias: computerAlias(device.name, device.deviceId) }));
 
-function setup(rows: Array<{ deviceKey: string; mode: string; expiresAt: Date | null }> = []) {
+function setup(
+  rows: Array<{ deviceKey: string; mode: string; expiresAt: Date | null }> = [],
+  devices: { online?: typeof choices; paired?: typeof choices } = {},
+) {
   const findMany = vi.fn(async (_args: unknown) => rows);
   const upsert = vi.fn(async (_args: unknown) => ({}));
   const deleteMany = vi.fn(async (_args: unknown) => ({ count: 1 }));
   const findFirst = vi.fn(async (_args: unknown) => null);
+  const online = devices.online ?? choices;
+  const paired = devices.paired ?? devices.online ?? choices;
   const gateway = {
-    connected: async () => choices[0],
-    connectedAll: async () => choices,
-    connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(choices, ref),
+    connected: async () => online[0] ?? null,
+    connectedAll: async () => online,
+    connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(online, ref),
+    pairedAll: async () => paired,
     pairedSince: async () => new Date(0),
   } as unknown as UserDeviceGateway;
   const ctx = {
@@ -106,13 +112,13 @@ describe("userComputerPolicy", () => {
     });
     expect(granted.upsert).not.toHaveBeenCalled();
     expect(first.text).toContain("auto");
+    expect(first.text).toContain("space's approval path");
 
     const empty = setup();
     empty.deleteMany.mockResolvedValue({ count: 0 });
-    const second = (await userComputerPolicy(
-      empty.ctx,
-      empty.call({ action: "auto" }),
-    )) as { text: string };
+    const second = (await userComputerPolicy(empty.ctx, empty.call({ action: "auto" }))) as {
+      text: string;
+    };
     expect(second.text).toContain("already auto");
   });
 
@@ -145,7 +151,7 @@ describe("userComputerPolicy", () => {
     ).toMatchObject({ deviceKey: "*", expiresAt: null });
   });
 
-  it("revokes only the named computer, and says so when nothing was granted", async () => {
+  it("treats revoke as auto instead of promising that it asks again", async () => {
     const { ctx, call, deleteMany } = setup();
     const result = (await userComputerPolicy(
       ctx,
@@ -154,15 +160,36 @@ describe("userComputerPolicy", () => {
     expect(deleteMany).toHaveBeenCalledWith({
       where: { botId: "bot-1", deviceKey: "device-1" },
     });
-    expect(result.text).toContain("Revoked");
+    expect(result.text).toContain("auto");
+    expect(result.text).toContain("space's approval path");
+    expect(result.text).not.toMatch(/asks again|already asks/);
   });
 
-  it("names the online computers instead of writing a policy for an unknown one", async () => {
+  it("writes a policy for a paired computer that is offline", async () => {
+    const { ctx, call, upsert } = setup([], { online: [choices[0]!], paired: choices });
+    const result = (await userComputerPolicy(
+      ctx,
+      call({ action: "allow", computer: choices[1]!.alias }),
+    )) as { text: string };
+    expect(
+      (upsert.mock.calls[0]?.[0] as { create: { deviceKey: string } } | undefined)?.create
+        .deviceKey,
+    ).toBe("device-2");
+    expect(result.text).toContain(choices[1]!.alias);
+  });
+
+  it("lists paired computers even when they are offline", async () => {
+    const { ctx, call } = setup([], { online: [choices[0]!], paired: choices });
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toContain(choices[1]!.alias);
+  });
+
+  it("names the paired computers instead of writing a policy for an unknown one", async () => {
     const { ctx, call, upsert } = setup();
     const result = (await userComputerPolicy(ctx, call({ action: "allow", computer: "nope" }))) as {
       error: string;
     };
-    expect(result.error).toContain("No connected computer named");
+    expect(result.error).toContain("No paired computer named");
     expect(upsert).not.toHaveBeenCalled();
   });
 

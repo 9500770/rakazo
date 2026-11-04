@@ -15,7 +15,7 @@ import { USER_COMPUTER_POLICY_TOOL } from "./user-computer-tools.js";
 import type { UserDeviceChoice } from "./user-device-alias.js";
 import {
   computerAlias,
-  onlineUserComputers,
+  pairedUserComputers,
   resolveUserDevice,
   safeDeviceLabel,
 } from "./user-device-alias.js";
@@ -89,15 +89,15 @@ export async function userComputerPolicy(ctx: RunContext, call: ToolCall) {
   const store = userComputerPolicyStore(deps.prisma);
   if (!store) return call.finish({ error: "Computer permissions are not available here." });
 
-  const online = await onlineUserComputers(deps.userDevices, owner);
+  const paired = await pairedUserComputers(deps.userDevices, owner);
   // Naming no computer covers every computer; it does not quietly pick the default one.
-  const choice = computer?.trim() ? resolveUserDevice(online, computer) : undefined;
+  const choice = computer?.trim() ? resolveUserDevice(paired, computer) : undefined;
   if (computer?.trim() && !choice) {
-    const names = online
+    const names = paired
       .map((device) => `${device.alias} (${safeDeviceLabel(device.platform)})`)
       .join(", ");
     return call.finish({
-      error: `No connected computer named "${computer}". Online: ${names || "none"}.`,
+      error: `No paired computer named "${computer}". Paired: ${names || "none"}.`,
     });
   }
 
@@ -107,33 +107,22 @@ export async function userComputerPolicy(ctx: RunContext, call: ToolCall) {
       select: { deviceKey: true, mode: true, expiresAt: true },
     });
     return call.finish({
-      text: describePolicies(target.name, online, rows, await spaceApprovalMode(ctx)),
+      text: describePolicies(target.name, paired, rows, await spaceApprovalMode(ctx)),
     });
   }
 
   const deviceKey = choice?.deviceId ?? USER_COMPUTER_POLICY_ALL;
-  // Auto is the default: drop the row so the space's path decides again, and the judge
-  // reviews each call. It is what a computer shows when nothing was ever written.
-  if (action === "auto") {
+  // Auto is the default: drop the row so the space's path decides again. Revoke is the
+  // same action; the space may ask, judge, or (when Never) still judge on a real desktop.
+  if (action === "auto" || action === "revoke") {
     const { count } = await store.deleteMany({
       where: { botId: target.id, ...(choice ? { deviceKey: choice.deviceId } : {}) },
     });
     const where = choice ? computerLabel(choice, computer) : "every computer";
     return call.finish({
       text: count
-        ? `${target.name} on ${where}: auto. The space's approval path decides, judging each call.`
+        ? `${target.name} on ${where}: auto. The space's approval path decides again.`
         : `${target.name} on ${where}: already auto.`,
-    });
-  }
-  if (action === "revoke") {
-    const { count } = await store.deleteMany({
-      where: { botId: target.id, ...(choice ? { deviceKey: choice.deviceId } : {}) },
-    });
-    const where = choice ? computerLabel(choice, computer) : "every computer";
-    return call.finish({
-      text: count
-        ? `Revoked ${target.name} on ${where}. It asks again.`
-        : `${target.name} had no permission on ${where}; it already asks.`,
     });
   }
 
@@ -189,7 +178,7 @@ async function spaceApprovalMode(ctx: RunContext): Promise<string> {
 
 function describePolicies(
   bot: string,
-  online: readonly UserDeviceChoice[],
+  paired: readonly UserDeviceChoice[],
   rows: readonly UserComputerPolicyRow[],
   fallback: string,
 ): string {
@@ -198,7 +187,7 @@ function describePolicies(
   // No row is not "ask": it means the space's path decides, which on a real desktop is
   // Auto's judge. Printing "ask" claimed every call would show a card when none did.
   lines.push(`every computer: ${all ? describeUserComputerPolicy(all) : fallback}`);
-  for (const device of online) {
+  for (const device of paired) {
     // A row for this computer wins; otherwise the row for all of them is what applies.
     const row = rows.find((candidate) => candidate.deviceKey === device.deviceId) ?? all;
     lines.push(

@@ -54,14 +54,12 @@ Open the computer and choose **More computer actions**:
 
 In the [desktop app](./desktop-app.md), bots can also run commands on the computer the app is
 installed on. Turn on **Let bots use this computer** in **Settings → General** under **Computers**.
-In every [approval mode](./approvals.md), a bot asks before it uses an app there, unless a Block
-rule refuses it, and **Allow in this space** covers the rest of that space, in any chat, until you
-remove the computer from the same list.
+The space's [approval mode](./approvals.md) decides each use: Auto judges it, Ask shows a card.
+**Allow in this space** covers later uses of the same app in that space until you remove the
+computer. A command is judged or asked every time unless you tell that bot to allow that computer.
 
-A command is not remembered that way: it asks every time on every computer, even after you approved
-an earlier one, because a grant that carried over to every computer would be access you cannot see
-or take back. To stop the asking for one bot on one computer, tell that bot to allow that computer.
-The change is the per-computer permission, and every other computer keeps asking.
+A command on your computer stops at the ordinary command timeout; it is not handed off to keep
+running in the background.
 
 > [!WARNING]
 > A bot with access to your computer can read your files and run programs as you. Only turn it on

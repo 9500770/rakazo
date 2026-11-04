@@ -183,9 +183,9 @@ model UserDeviceConnection {
   @@map("user_device_connections")
 }
 
-/// How one bot may use one of its owner's paired computers. No row means "ask", the safe
-/// default; a row for one computer beats the row for all of them. Grants may expire on their
-/// own, so access given for one task is taken back without anyone remembering to revoke it.
+/// How one bot may use one of its owner's paired computers. No row follows the space's
+/// approval path; a row for one computer beats the row for all of them. Grants may expire on
+/// their own, so access given for one task is taken back without anyone remembering to revoke it.
 model UserComputerPolicy {
   id        String   @id @default(cuid())
   spaceId   String

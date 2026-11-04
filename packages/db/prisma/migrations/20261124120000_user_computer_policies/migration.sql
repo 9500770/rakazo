@@ -1,5 +1,5 @@
--- Additive: the previous release never reads this table. A missing row still means "ask", so
--- every bot keeps exactly the approval behavior it had before this migration.
+-- Additive: the previous release never reads this table. A missing row follows the space's
+-- approval path, so every bot keeps the approval behavior it had before this migration.
 CREATE TABLE "user_computer_policies" (
     "id" TEXT NOT NULL,
     "spaceId" TEXT NOT NULL,

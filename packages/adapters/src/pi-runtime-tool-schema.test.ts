@@ -540,6 +540,20 @@ describe("user computer tool parameters", () => {
     expect(wireFor("shell").properties).not.toHaveProperty("computer");
   });
 
+  it("offers auto on user_computer_policy in the catalog and the TypeBox wire schema", () => {
+    const catalog = toolFor("user_computer_policy").inputSchema as {
+      properties: { action: { enum: string[] } };
+    };
+    expect(catalog.properties.action.enum).toEqual(["list", "allow", "ask", "auto", "revoke"]);
+    expect(wireFor("user_computer_policy").properties.action.enum).toEqual([
+      "list",
+      "allow",
+      "ask",
+      "auto",
+      "revoke",
+    ]);
+  });
+
   it("carries a chosen computer through argument normalization", () => {
     const prepared = (name: string, args: Record<string, unknown>) =>
       toAgentTools([toolFor(name)], {} as never)[0]!.prepareArguments?.(args);

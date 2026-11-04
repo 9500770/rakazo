@@ -1,6 +1,6 @@
 import type { UserDevice, UserDeviceGateway } from "./user-device-protocol.js";
 
-/** One of the user's connected computers, addressable by alias, full deviceId, or exact name. */
+/** One of the user's computers, addressable by alias, full deviceId, or exact name. */
 export interface UserDeviceChoice extends UserDevice {
   alias: string;
 }
@@ -15,6 +15,8 @@ export interface UserDevicePicker extends UserDeviceGateway {
   connectedAll(userId: string): Promise<UserDeviceChoice[]>;
   /** The online device a reference names, or the latest one when it is omitted; null when none. */
   connectedDevice(userId: string, ref?: string): Promise<UserDeviceChoice | null>;
+  /** Every paired device of the user, newest pairing first, each with its alias. Optional. */
+  pairedAll?(userId: string): Promise<UserDeviceChoice[]>;
 }
 
 /** The gateway's device-selection methods when it has them, else undefined. */
@@ -72,6 +74,23 @@ export async function onlineUserComputers(
     if (picker) return await picker.connectedAll(userId);
     const latest = await devices.connected(userId);
     return latest ? [{ ...latest, alias: computerAlias(latest.name, latest.deviceId) }] : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The user's paired computers, online or not: a listing gateway's pairedAll when it has one,
+ * otherwise the online list. Policy write and list target these; execution still needs online.
+ */
+export async function pairedUserComputers(
+  devices: UserDeviceGateway,
+  userId: string,
+): Promise<UserDeviceChoice[]> {
+  try {
+    const picker = userDevicePicker(devices);
+    if (picker && typeof picker.pairedAll === "function") return await picker.pairedAll(userId);
+    return await onlineUserComputers(devices, userId);
   } catch {
     return [];
   }

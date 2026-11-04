@@ -473,7 +473,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "user_computer_shell",
     description:
-      "Run a command on the user's own computer. Use only when the task needs their local files, credentials, or network. cwd defaults to their home folder and must stay inside it.",
+      "Run a command on the user's own computer. Use only when the task needs their local files, credentials, or network. cwd defaults to their home folder and must stay inside it. The command stops at the ordinary timeout; it is not handed off to keep running.",
     inputSchema: {
       type: "object",
       properties: {
@@ -564,7 +564,7 @@ export const builtinAgentTools: ConnectorTool[] = [
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["list", "allow", "ask", "revoke"] },
+        action: { type: "string", enum: ["list", "allow", "ask", "auto", "revoke"] },
         computer: {
           type: "string",
           maxLength: 120,

@@ -19,6 +19,7 @@ import {
   SHELL_STILL_RUNNING_NOTICE,
 } from "./shell-command-stream.js";
 import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
+import type { UserComputerPolicyRow } from "./user-computer-policy.js";
 import { activeUserComputerPolicy, USER_COMPUTER_POLICY_ALL } from "./user-computer-policy.js";
 import { userComputerPolicyStore } from "./user-computer-policy-store.js";
 import {
@@ -31,7 +32,13 @@ import {
   userComputerAppName,
 } from "./user-computer-tools.js";
 import type { UserDeviceChoice } from "./user-device-alias.js";
-import { computerAlias, safeDeviceLabel, userDevicePicker } from "./user-device-alias.js";
+import {
+  computerAlias,
+  pairedUserComputers,
+  resolveUserDevice,
+  safeDeviceLabel,
+  userDevicePicker,
+} from "./user-device-alias.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
 
 export {
@@ -153,12 +160,10 @@ async function userComputerPolicyFor(
   const devices = ctx.deps.userDevices;
   const store = userComputerPolicyStore(ctx.deps.prisma);
   if (!owner || !devices || !store || !ctx.bot?.id) return undefined;
-  const picker = userDevicePicker(devices);
-  const device = picker
-    ? await picker.connectedDevice(owner, computerArg(args.computer)).catch(() => null)
-    : null;
-  const rows = await store
-    .findMany({
+  const device = await policyTargetDevice(devices, owner, computerArg(args.computer));
+  let rows: UserComputerPolicyRow[];
+  try {
+    rows = await store.findMany({
       where: {
         botId: ctx.bot.id,
         deviceKey: {
@@ -166,9 +171,33 @@ async function userComputerPolicyFor(
         },
       },
       select: { deviceKey: true, mode: true, expiresAt: true },
-    })
-    .catch(() => []);
+    });
+  } catch {
+    // A dropped ask row would let the space path (or never-ask) run. Fail closed.
+    return "ask";
+  }
   return activeUserComputerPolicy(rows, device?.deviceId);
+}
+
+/**
+ * The computer a policy row is matched against. A named computer is resolved among paired
+ * devices so a brief disconnect does not drop a per-machine row; unnamed uses the online
+ * default that execute will actually run on.
+ */
+async function policyTargetDevice(
+  devices: UserDeviceGateway,
+  owner: string,
+  ref: string | undefined,
+): Promise<UserDeviceChoice | null> {
+  const picker = userDevicePicker(devices);
+  if (ref) {
+    const paired = await pairedUserComputers(devices, owner);
+    const named = resolveUserDevice(paired, ref);
+    if (named) return named;
+  }
+  if (picker) return picker.connectedDevice(owner, ref).catch(() => null);
+  const latest = await devices.connected(owner).catch(() => null);
+  return latest ? { ...latest, alias: computerAlias(latest.name, latest.deviceId) } : null;
 }
 
 /** True when this space already approved the same app for this bot inside the grant window. */

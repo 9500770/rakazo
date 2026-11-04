@@ -69,11 +69,10 @@ ${RAKAZO_DOCS.map(([topics, url]) => `- ${topics}: ${url}`).join("\n")}`,
     name: "PC",
     description: "See or set which computers this bot may use without asking.",
     body: `Change computer permissions with the user_computer_policy tool (call find_tool first if its schema is not loaded). One call per command:
-- list, no arguments: every computer and this bot's mode on each. No policy means the space's approval mode decides.
+- list, no arguments: every paired computer and this bot's mode on each. No policy means the space's approval mode decides.
 - allow, with computer (an alias from the list) and optionally minutes: use that computer without asking for that long; without minutes, until revoked. Omit computer for every computer.
 - ask, with computer: ask again before using it.
-- auto, with or without computer: stop overriding it; the space's approval path decides again, judging each call. This is the default when nothing was written.
-- revoke, with or without computer: drop the policy now.
+- auto or revoke, with or without computer: drop the override so the space's approval path decides again. This is the default when nothing was written.
 
 A policy is per bot and per computer, so allowing one bot on one computer leaves every other combination on the space's path. Add bot (name or id) to change another bot in this space. Report the tool's reply in one sentence and never claim a change it did not confirm.`,
   },

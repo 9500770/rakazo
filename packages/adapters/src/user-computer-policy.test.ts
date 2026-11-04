@@ -47,7 +47,7 @@ describe("userComputerPolicyExpiry", () => {
 });
 
 describe("describeUserComputerPolicy", () => {
-  it("stays short and turns an expired grant back into ask", () => {
+  it("stays short and turns an expired grant back into auto", () => {
     expect(describeUserComputerPolicy({ mode: "allow", expiresAt: null }, now)).toBe(
       "allow until revoked",
     );

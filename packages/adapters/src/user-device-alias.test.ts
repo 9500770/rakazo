@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computerAlias,
   onlineUserComputers,
+  pairedUserComputers,
   resolveUserDevice,
   safeDeviceLabel,
 } from "./user-device-alias.js";
@@ -106,6 +107,36 @@ describe("onlineUserComputers", () => {
     await expect(
       onlineUserComputers({} as unknown as UserDeviceGateway, "user-1"),
     ).resolves.toEqual([]);
+  });
+});
+
+describe("pairedUserComputers", () => {
+  it("lists paired devices when the gateway can, including ones that are offline", async () => {
+    const gateway = {
+      connected: async () => ({ deviceId: "dev-a1", name: "Desk", platform: "darwin" }),
+      connectedAll: async () => [
+        { deviceId: "dev-a1", name: "Desk", platform: "darwin", alias: "desk-0-a1" },
+      ],
+      connectedDevice: async () => null,
+      pairedAll: async () => [
+        { deviceId: "dev-a1", name: "Desk", platform: "darwin", alias: "desk-0-a1" },
+        { deviceId: "dev-b2", name: "Lap", platform: "win32", alias: "lap-0-b2" },
+      ],
+    } as unknown as UserDeviceGateway;
+    await expect(pairedUserComputers(gateway, "user-1")).resolves.toHaveLength(2);
+  });
+
+  it("falls back to the online list when the gateway cannot list paired devices", async () => {
+    const gateway = {
+      connected: async () => ({ deviceId: "dev-a1", name: "Desk PC", platform: "darwin" }),
+      connectedAll: async () => [
+        { deviceId: "dev-a1", name: "Desk PC", platform: "darwin", alias: "desk-pc-v-a1" },
+      ],
+      connectedDevice: async () => null,
+    } as unknown as UserDeviceGateway;
+    await expect(pairedUserComputers(gateway, "user-1")).resolves.toEqual([
+      { deviceId: "dev-a1", name: "Desk PC", platform: "darwin", alias: "desk-pc-v-a1" },
+    ]);
   });
 });
 

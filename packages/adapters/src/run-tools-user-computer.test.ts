@@ -3,13 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostComputerRequest } from "./host-computer-protocol.js";
 import type { RunContext } from "./run-context.js";
 import type { ToolCall } from "./run-tool-gate.js";
+import type { UserComputerGateInput } from "./run-tools-user-computer.js";
 import {
   userComputerCwd,
   userComputerGate,
   userComputerObserve,
   userComputerOwner,
   userComputerShell,
-  type UserComputerGateInput,
 } from "./run-tools-user-computer.js";
 import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
 import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
@@ -152,9 +152,7 @@ describe("userComputerGate", () => {
       },
       run: { spaceId: "space-1", userId: "user-1" },
     } as unknown as RunContext;
-    await expect(gate(ctx, false, "user_computer_observe", { app: "mail" })).resolves.toBe(
-      "allow",
-    );
+    await expect(gate(ctx, false, "user_computer_observe", { app: "mail" })).resolves.toBe("allow");
     expect(findMany).toHaveBeenCalledTimes(3);
     await expect(gate(ctx, false, "user_computer_observe", { app: "Notes" })).resolves.toBe("ask");
   });
@@ -211,9 +209,7 @@ describe("userComputerGate approval mode", () => {
   it("runs in never mode, and still refuses a block", async () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "never");
     const { ctx } = gatedContext();
-    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe(
-      "allow",
-    );
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("allow");
     await expect(gate(ctx, true, "user_computer_shell", { command: "ls" })).resolves.toBe("deny");
   });
 
@@ -262,9 +258,7 @@ describe("userComputerGate approval mode", () => {
       },
       run: { spaceId: "space-1", userId: "user-1" },
     } as unknown as RunContext;
-    await expect(gate(ctx, false, "user_computer_observe", { app: "Mail" })).resolves.toBe(
-      "allow",
-    );
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Mail" })).resolves.toBe("allow");
     await expect(gate(ctx, false, "user_computer_observe", { app: "Notes" })).resolves.toBe("ask");
   });
 
@@ -272,20 +266,31 @@ describe("userComputerGate approval mode", () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "");
     const { ctx, lookup } = gatedContext();
     await expect(
-      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
-        mode: "auto",
-        checkerConfigured: true,
-      }),
+      gate(
+        ctx,
+        false,
+        "user_computer_shell",
+        { command: "ls" },
+        {
+          mode: "auto",
+          checkerConfigured: true,
+        },
+      ),
     ).resolves.toBe("judge");
     await expect(
-      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
-        mode: "auto",
-        checkerConfigured: false,
-      }),
+      gate(
+        ctx,
+        false,
+        "user_computer_shell",
+        { command: "ls" },
+        {
+          mode: "auto",
+          checkerConfigured: false,
+        },
+      ),
     ).resolves.toBe("ask");
     expect(lookup).not.toHaveBeenCalled();
   });
-
 });
 
 describe("userComputerOwner", () => {
@@ -441,6 +446,32 @@ describe("userComputerShell device selection", () => {
     expect(deviceIds).toEqual([]);
   });
 
+  it("still needs the named computer online to run, even when it is paired", async () => {
+    const { ctx, call, requests } = setupDevices(online);
+    const gateway = ctx.deps.userDevices as unknown as {
+      pairedAll: (userId: string) => Promise<unknown>;
+    };
+    gateway.pairedAll = async () => [
+      ...online.map((device) => ({
+        ...device,
+        alias: computerAlias(device.name, device.deviceId),
+      })),
+      {
+        deviceId: "dev-off0003",
+        name: "Office PC",
+        platform: "win32",
+        alias: computerAlias("Office PC", "dev-off0003"),
+      },
+    ];
+    expect(
+      await userComputerShell(ctx, call({ command: "ls", computer: "office-pc-0003" })),
+    ).toEqual({
+      error:
+        'No connected computer named "office-pc-0003". Online: desk-pc-0001 (darwin), macbook-0002 (win32), or omit computer to use the default.',
+    });
+    expect(requests).toEqual([]);
+  });
+
   it("still runs on the latest device without a computer argument", async () => {
     const { ctx, call, deviceIds } = setupDevices(online);
     const result = (await userComputerShell(ctx, call({ command: "ls" }))) as { computer: string };
@@ -508,6 +539,7 @@ describe("userComputerGate policy rows", () => {
       connected: async () => choices[0],
       connectedAll: async () => choices,
       connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(choices, ref),
+      pairedAll: async () => choices,
       pairedSince: async () => new Date(0),
     } as unknown as UserDeviceGateway;
     const ctx = {
@@ -538,10 +570,16 @@ describe("userComputerGate policy rows", () => {
       { deviceKey: "device-1", mode: "allow", expiresAt: null },
     ]);
     await expect(
-      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
-        mode: "auto",
-        checkerConfigured: true,
-      }),
+      gate(
+        ctx,
+        false,
+        "user_computer_shell",
+        { command: "ls" },
+        {
+          mode: "auto",
+          checkerConfigured: true,
+        },
+      ),
     ).resolves.toBe("allow");
     expect(
       (findMany.mock.calls[0]?.[0] as { where: { botId: string } } | undefined)?.where.botId,
@@ -564,9 +602,7 @@ describe("userComputerGate policy rows", () => {
       { deviceKey: "device-2", mode: "ask", expiresAt: null },
     ];
     const { ctx } = policyContext(rows);
-    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe(
-      "allow",
-    );
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("allow");
     await expect(
       gate(ctx, false, "user_computer_shell", {
         command: "ls",
@@ -586,5 +622,48 @@ describe("userComputerGate policy rows", () => {
     const { ctx, findFirst } = policyContext([], false);
     await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("ask");
     expect(findFirst).not.toHaveBeenCalled();
+  });
+
+  it("matches a per-machine row for a paired computer that is briefly offline", async () => {
+    const { ctx } = policyContext([{ deviceKey: "device-1", mode: "allow", expiresAt: null }]);
+    const gateway = ctx.deps.userDevices as unknown as {
+      connectedAll: () => Promise<unknown>;
+      connectedDevice: () => Promise<unknown>;
+      pairedAll: () => Promise<unknown>;
+    };
+    gateway.connectedAll = async () => [];
+    gateway.connectedDevice = async () => null;
+    gateway.pairedAll = async () => choices;
+    await expect(
+      gate(
+        ctx,
+        false,
+        "user_computer_shell",
+        { command: "ls", computer: choices[0]!.alias },
+        {
+          mode: "auto",
+          checkerConfigured: true,
+        },
+      ),
+    ).resolves.toBe("allow");
+  });
+
+  it("asks when the policy store cannot be read instead of dropping an ask row", async () => {
+    const { ctx, findMany } = policyContext([
+      { deviceKey: "device-1", mode: "ask", expiresAt: null },
+    ]);
+    findMany.mockRejectedValue(new Error("db down"));
+    await expect(
+      gate(
+        ctx,
+        false,
+        "user_computer_shell",
+        { command: "ls" },
+        {
+          mode: "auto",
+          checkerConfigured: true,
+        },
+      ),
+    ).resolves.toBe("ask");
   });
 });

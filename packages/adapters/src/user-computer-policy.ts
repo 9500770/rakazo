@@ -1,8 +1,8 @@
 /**
  * A policy row is the only place a bot's reach on a real desktop is widened. Rows are
  * keyed by bot and computer, so opening one combination for an afternoon leaves every other bot
- * and computer asking. No row means the space's approval path decides — the safe default, and
- * what an expired row becomes.
+ * and computer on the space's path. No row means the space's approval path decides — the
+ * default, and what an expired row becomes.
  *
  * Kept free of Prisma and Node imports: the gate and the tool both read these rules, and tests
  * exercise them without a database.

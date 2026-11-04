@@ -121,9 +121,9 @@ export interface CommandRequest {
   unsetEnv?: string[];
   pty?: boolean;
   /**
-   * Soft wall-clock budget for a streamed command: past this the adapter hands the process
-   * off instead of killing it. Only the background ceiling terminates the command and its
-   * descendants.
+   * Soft wall-clock budget for a streamed command. Providers that support handoff keep the
+   * process running past this and only the background ceiling terminates it; others still
+   * stop the command at timeoutMs.
    */
   timeoutMs?: number;
 }

@@ -58,10 +58,24 @@ function fakePrisma() {
         for (const id of ids(where)) if (devices.has(id)) Object.assign(devices.get(id)!, data);
         return { count: 0 };
       },
-      findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
-        ids(where)
+      findMany: async ({
+        where,
+      }: {
+        where: { id?: { in: string[] } | string; userId?: string; revokedAt?: Date | null };
+      }) => {
+        if (typeof where.userId === "string") {
+          return [...devices.values()]
+            .filter(
+              (row) =>
+                row.userId === where.userId &&
+                (where.revokedAt === null ? row.revokedAt === null : true),
+            )
+            .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+        }
+        return ids(where)
           .map((id) => devices.get(id))
-          .filter((row) => row?.revokedAt),
+          .filter((row) => row?.revokedAt);
+      },
       findFirst: async ({ where }: { where: { userId: string; revokedAt: null } }) =>
         [...devices.values()].find((row) => row.userId === where.userId && !row.revokedAt) ?? null,
     },
@@ -330,6 +344,28 @@ describe("user device gateway in the holding process", () => {
     deviceRows.get(deskTop.id)!.revokedAt = new Date();
     await expect(devices.connectedAll("user-1")).resolves.toEqual([]);
     await expect(devices.connected("user-1")).resolves.toBeNull();
+  });
+
+  it("lists paired computers that are offline, and drops a revoked one", async () => {
+    const { devices, deviceRows } = setup();
+    const laptop = { id: "dev-lap0002", userId: "user-1", name: "MacBook", platform: "win32" };
+    deviceRows.set(laptop.id, {
+      ...laptop,
+      tokenHash: "x",
+      createdAt: new Date(1),
+      revokedAt: null,
+      lastSeenAt: null,
+    });
+    deviceRows.get(device.id)!.createdAt = new Date(0);
+    await expect(devices.pairedAll("user-1")).resolves.toEqual([
+      { deviceId: laptop.id, name: "MacBook", platform: "win32", alias: "macbook-0002" },
+      { deviceId: device.id, name: "Laptop", platform: "darwin", alias: "laptop-ce-1" },
+    ]);
+    await expect(devices.connectedAll("user-1")).resolves.toEqual([]);
+    deviceRows.get(laptop.id)!.revokedAt = new Date();
+    await expect(devices.pairedAll("user-1")).resolves.toEqual([
+      { deviceId: device.id, name: "Laptop", platform: "darwin", alias: "laptop-ce-1" },
+    ]);
   });
 
   it("fails an in-flight request when the device disconnects and never resends it", async () => {

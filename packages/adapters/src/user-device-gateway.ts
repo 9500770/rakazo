@@ -569,6 +569,23 @@ export class UserDevices implements UserDeviceGateway {
     return resolveUserDevice(await this.connectedAll(userId), ref);
   }
 
+  /** Every paired device of the user, newest pairing first, each with its alias. */
+  async pairedAll(userId: string): Promise<UserDeviceChoice[]> {
+    const devices = await runAsSystem("find a user's paired devices", () =>
+      this.deps.prisma.userDevice.findMany({
+        where: { userId, revokedAt: null },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, name: true, platform: true },
+      }),
+    );
+    return devices.map((device) => ({
+      deviceId: device.id,
+      name: device.name,
+      platform: device.platform,
+      alias: computerAlias(device.name, device.id),
+    }));
+  }
+
   /** Revokes the user's devices whose pairing sign-in ended while they were offline. */
   async releaseSignedOut(userId: string): Promise<void> {
     const devices = await runAsSystem("find a user's signed-in devices", () =>
