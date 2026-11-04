@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { PrismaClient } from "@rakazo/db";
 import { asSystem, createDb, installSecurityEventStore } from "@rakazo/db";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { computerAlias } from "./user-device-alias.js";
 import type { UserDeviceSocket } from "./user-device-gateway.js";
 import {
   createUserDeviceToken,
@@ -105,6 +106,14 @@ describePostgres("user devices (PostgreSQL)", () => {
     });
     await expect(gateway.list(userId)).resolves.toEqual([
       { deviceId: device.id, name: "Laptop", connected: false },
+    ]);
+    await expect(gateway.pairedAll(userId)).resolves.toEqual([
+      {
+        deviceId: device.id,
+        name: "Laptop",
+        platform: "linux",
+        alias: computerAlias("Laptop", device.id),
+      },
     ]);
     await prisma.userDeviceConnection.update({
       where: { deviceId: device.id },

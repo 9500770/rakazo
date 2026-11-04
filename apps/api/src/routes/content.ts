@@ -164,19 +164,24 @@ export function contentRoutes(ctx: RouterContext) {
         ]);
         const runs = new Set(runGroups.map((row) => row.parentRunId ?? row.runId).filter(Boolean))
           .size;
-        // A total that skips rows without a count would understate spend, so it reads as unknown.
+        // Totals sum the calls that reported a figure and count the ones that did not, so the
+        // client can show an approximate total instead of blanking the panel over a few
+        // calls that ended before the provider reported usage.
         const completeSums = (group: {
           _sum: Record<keyof typeof sums, number | null>;
           _count: Record<keyof typeof counts, number>;
         }) => {
-          const complete = (field: keyof typeof sums) =>
-            group._count[field] === group._count._all ? (group._sum[field] ?? 0) : null;
+          const total = (field: keyof typeof sums) =>
+            group._count[field] === 0 ? null : (group._sum[field] ?? 0);
+          const uncounted = (field: keyof typeof sums) => group._count._all - group._count[field];
           return {
-            inputTokens: complete("inputTokens"),
-            outputTokens: complete("outputTokens"),
-            totalTokens: complete("totalTokens"),
-            costUsd: complete("costUsd"),
+            inputTokens: total("inputTokens"),
+            outputTokens: total("outputTokens"),
+            totalTokens: total("totalTokens"),
+            costUsd: total("costUsd"),
             modelCalls: group._count._all,
+            uncountedTokenCalls: uncounted("inputTokens"),
+            uncountedCostCalls: uncounted("costUsd"),
           };
         };
         return {

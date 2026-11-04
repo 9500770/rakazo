@@ -381,6 +381,10 @@ function toAgentTool(
           command: String(raw.command ?? ""),
           // The executor chooses the default: the bot's folder, or the user's home.
           ...(raw.cwd ? { cwd: String(raw.cwd) } : {}),
+          // Only the user's own computers are addressable; the bot's single one is not.
+          ...(tool.name === "user_computer_shell" && raw.computer
+            ? { computer: String(raw.computer) }
+            : {}),
         };
       }
       if (tool.name === "run_subagent") {

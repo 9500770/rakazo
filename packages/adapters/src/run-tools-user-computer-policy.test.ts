@@ -1,0 +1,203 @@
+import { describe, expect, it, vi } from "vitest";
+import type { RunContext } from "./run-context.js";
+import type { ToolCall } from "./run-tool-gate.js";
+import { userComputerPolicy, userComputerPolicyGate } from "./run-tools-user-computer-policy.js";
+import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
+import type { UserDeviceGateway } from "./user-device-protocol.js";
+
+const choices = [
+  { deviceId: "device-1", name: "Laptop", platform: "darwin" },
+  { deviceId: "device-2", name: "Office PC", platform: "win32" },
+].map((device) => ({ ...device, alias: computerAlias(device.name, device.deviceId) }));
+
+function setup(
+  rows: Array<{ deviceKey: string; mode: string; expiresAt: Date | null }> = [],
+  devices: { online?: typeof choices; paired?: typeof choices } = {},
+) {
+  const findMany = vi.fn(async (_args: unknown) => rows);
+  const upsert = vi.fn(async (_args: unknown) => ({}));
+  const deleteMany = vi.fn(async (_args: unknown) => ({ count: 1 }));
+  const findFirst = vi.fn(async (_args: unknown) => null);
+  const online = devices.online ?? choices;
+  const paired = devices.paired ?? devices.online ?? choices;
+  const gateway = {
+    connected: async () => online[0] ?? null,
+    connectedAll: async () => online,
+    connectedDevice: async (_userId: string, ref?: string) => resolveUserDevice(online, ref),
+    pairedAll: async () => paired,
+    pairedSince: async () => new Date(0),
+  } as unknown as UserDeviceGateway;
+  const ctx = {
+    deps: {
+      userDevices: gateway,
+      prisma: {
+        userComputerPolicy: { findMany, upsert, deleteMany },
+        bot: { findFirst },
+        attempt: { count: async () => 1 },
+      },
+    },
+    bot: { id: "bot-1", name: "Chief" },
+    run: { spaceId: "space-1", userId: "user-1" },
+    runId: "run-1",
+    source: { userComputerOwner: "user-1", ownerStartedRun: true },
+    state: {},
+    trust: { receivedOutsideMessage: async () => false },
+  } as unknown as RunContext;
+  const call = (args: Record<string, unknown>) =>
+    ({
+      name: "user_computer_policy",
+      args,
+      finish: async (result: unknown) => result,
+    }) as unknown as ToolCall;
+  return { ctx, call, findMany, upsert, deleteMany, findFirst };
+}
+
+describe("userComputerPolicyGate", () => {
+  it("lets a listing through and always confirms a change", () => {
+    expect(userComputerPolicyGate(false, { action: "list" })).toBe("allow");
+    expect(userComputerPolicyGate(false, { action: "allow" })).toBe("ask");
+    expect(userComputerPolicyGate(true, { action: "list" })).toBe("deny");
+  });
+});
+
+describe("userComputerPolicy", () => {
+  it("lists every computer and the mode that applies to it", async () => {
+    const { ctx, call, findMany } = setup([
+      { deviceKey: "*", mode: "allow", expiresAt: null },
+      { deviceKey: "device-2", mode: "ask", expiresAt: null },
+    ]);
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { botId: "bot-1" } }));
+    expect(result.text).toBe(
+      [
+        "Chief:",
+        "every computer: allow until revoked",
+        `${choices[0]!.alias} (darwin): allow until revoked`,
+        `${choices[1]!.alias} (win32): ask`,
+      ].join("\n"),
+    );
+  });
+
+  it("lists auto, not ask, for computers no row covers", async () => {
+    const { ctx, call } = setup();
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toBe(
+      [
+        "Chief:",
+        "every computer: auto",
+        `${choices[0]!.alias} (darwin): auto`,
+        `${choices[1]!.alias} (win32): auto`,
+      ].join("\n"),
+    );
+  });
+
+  it("lists the split to the space mode when the space asks", async () => {
+    const { ctx, call } = setup();
+    (ctx.trust as { loadAutoReviewPreference?: unknown }).loadAutoReviewPreference = async () => ({
+      enabled: false,
+      skipApprovals: false,
+    });
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toContain("every computer: ask");
+  });
+
+  it("clears the row on auto and says when nothing was set", async () => {
+    const granted = setup();
+    const first = (await userComputerPolicy(
+      granted.ctx,
+      granted.call({ action: "auto", computer: choices[0]!.alias }),
+    )) as { text: string };
+    expect(granted.deleteMany).toHaveBeenCalledWith({
+      where: { botId: "bot-1", deviceKey: "device-1" },
+    });
+    expect(granted.upsert).not.toHaveBeenCalled();
+    expect(first.text).toContain("auto");
+    expect(first.text).toContain("space's approval path");
+
+    const empty = setup();
+    empty.deleteMany.mockResolvedValue({ count: 0 });
+    const second = (await userComputerPolicy(empty.ctx, empty.call({ action: "auto" }))) as {
+      text: string;
+    };
+    expect(second.text).toContain("already auto");
+  });
+
+  it("writes one bot's policy for the computer it names, with its own expiry", async () => {
+    const { ctx, call, upsert } = setup();
+    const result = (await userComputerPolicy(
+      ctx,
+      call({ action: "allow", computer: choices[1]!.alias, minutes: 90 }),
+    )) as { text: string };
+    const written = (
+      upsert.mock.calls[0]?.[0] as {
+        where: unknown;
+        create: { deviceKey: string; mode: string; expiresAt: Date | null };
+        update: unknown;
+      }
+    )?.create;
+    expect(written?.deviceKey).toBe("device-2");
+    expect(written?.mode).toBe("allow");
+    expect(written?.expiresAt).toBeInstanceOf(Date);
+    expect(result.text).toContain(`${choices[1]!.alias}`);
+    expect(result.text).toContain("allow for 90m");
+  });
+
+  it("covers every computer when none is named", async () => {
+    const { ctx, call, upsert } = setup();
+    await userComputerPolicy(ctx, call({ action: "ask" }));
+    expect(
+      (upsert.mock.calls[0]![0] as { create: { deviceKey: string; expiresAt: Date | null } })
+        .create,
+    ).toMatchObject({ deviceKey: "*", expiresAt: null });
+  });
+
+  it("treats revoke as auto instead of promising that it asks again", async () => {
+    const { ctx, call, deleteMany } = setup();
+    const result = (await userComputerPolicy(
+      ctx,
+      call({ action: "revoke", computer: choices[0]!.alias }),
+    )) as { text: string };
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { botId: "bot-1", deviceKey: "device-1" },
+    });
+    expect(result.text).toContain("auto");
+    expect(result.text).toContain("space's approval path");
+    expect(result.text).not.toMatch(/asks again|already asks/);
+  });
+
+  it("writes a policy for a paired computer that is offline", async () => {
+    const { ctx, call, upsert } = setup([], { online: [choices[0]!], paired: choices });
+    const result = (await userComputerPolicy(
+      ctx,
+      call({ action: "allow", computer: choices[1]!.alias }),
+    )) as { text: string };
+    expect(
+      (upsert.mock.calls[0]?.[0] as { create: { deviceKey: string } } | undefined)?.create
+        .deviceKey,
+    ).toBe("device-2");
+    expect(result.text).toContain(choices[1]!.alias);
+  });
+
+  it("lists paired computers even when they are offline", async () => {
+    const { ctx, call } = setup([], { online: [choices[0]!], paired: choices });
+    const result = (await userComputerPolicy(ctx, call({ action: "list" }))) as { text: string };
+    expect(result.text).toContain(choices[1]!.alias);
+  });
+
+  it("names the paired computers instead of writing a policy for an unknown one", async () => {
+    const { ctx, call, upsert } = setup();
+    const result = (await userComputerPolicy(ctx, call({ action: "allow", computer: "nope" }))) as {
+      error: string;
+    };
+    expect(result.error).toContain("No paired computer named");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it("refuses outside a chat the user started", async () => {
+    const { ctx, call, upsert } = setup();
+    (ctx.source as { ownerStartedRun: boolean }).ownerStartedRun = false;
+    const result = (await userComputerPolicy(ctx, call({ action: "allow" }))) as { error: string };
+    expect(result.error).toContain("only in a chat the user started");
+    expect(upsert).not.toHaveBeenCalled();
+  });
+});

@@ -14,6 +14,8 @@ vi.mock("@lingui/react/macro", () => ({
     i18n: { locale: "en" },
   }),
   Trans: ({ children }: { children: ReactNode }) => children,
+  Plural: ({ value, one, other }: { value: number; one: string; other: string }) =>
+    (value === 1 ? one : other).replace("#", String(value)),
 }));
 
 vi.mock("@rakazo/ui-web", async (importOriginal) => ({
@@ -309,6 +311,8 @@ it("shows usage totals and a per-model breakdown", async () => {
                 outputTokens: 30,
                 totalTokens: 1030,
                 costUsd: 0.5,
+                uncountedTokenCalls: 0,
+                uncountedCostCalls: 0,
               },
               {
                 provider: "local",
@@ -318,6 +322,8 @@ it("shows usage totals and a per-model breakdown", async () => {
                 outputTokens: 4,
                 totalTokens: 204,
                 costUsd: null,
+                uncountedTokenCalls: 0,
+                uncountedCostCalls: 0,
               },
             ],
           }}
@@ -337,6 +343,54 @@ it("shows usage totals and a per-model breakdown", async () => {
       ["model-aopenai", "2", "1,000", "30", "$0.50"],
       ["model-blocal", "1", "200", "4", "—"],
     ]);
+  } finally {
+    await act(async () => root.unmount());
+    vi.unstubAllGlobals();
+  }
+});
+
+it("marks usage totals approximate when some calls reported nothing", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () =>
+      root.render(
+        <UsageSettingsPanel
+          usage={{
+            runs: 3,
+            inputTokens: 1200,
+            outputTokens: 34,
+            totalTokens: 1234,
+            costUsd: 0.5,
+            modelCalls: 3,
+            uncountedTokenCalls: 1,
+            uncountedCostCalls: 1,
+            models: [
+              {
+                provider: "openai",
+                model: "model-a",
+                modelCalls: 3,
+                inputTokens: 1000,
+                outputTokens: 30,
+                totalTokens: 1030,
+                costUsd: 0.5,
+                uncountedTokenCalls: 1,
+                uncountedCostCalls: 1,
+              },
+            ],
+          }}
+        />,
+      ),
+    );
+    expect([...container.querySelectorAll("dd")].map((node) => node.textContent)).toEqual([
+      "3",
+      "≈ 1,234",
+      "≈ $0.50",
+    ]);
+    expect(container.querySelector('[data-testid="usage-missing-calls"]')?.textContent).toContain(
+      "1 call ended before the provider reported usage",
+    );
   } finally {
     await act(async () => root.unmount());
     vi.unstubAllGlobals();

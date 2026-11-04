@@ -75,7 +75,15 @@ import { resolveCompletedSecretLeftover } from "./run-secret.js";
 import type { ToolRequest } from "./run-tool-request.js";
 import { BUILTIN_AGENT_TOOL_NAMES, READ_ONLY_AGENT_TOOLS } from "./run-tool-selection.js";
 import { callMediaTool } from "./run-tools-files.js";
-import { USER_COMPUTER_TOOLS, userComputerGate } from "./run-tools-user-computer.js";
+import {
+  USER_COMPUTER_TOOLS,
+  userComputerGate,
+  userComputerReviewTarget,
+} from "./run-tools-user-computer.js";
+import {
+  USER_COMPUTER_POLICY_TOOL,
+  userComputerPolicyGate,
+} from "./run-tools-user-computer-policy.js";
 import { connectorTrustKeys } from "./run-trust.js";
 import { watchFromTool } from "./schedule-tools.js";
 
@@ -283,7 +291,12 @@ export async function gateToolCall(
     unidentifiedAction && resolvedRules.decision === "allow"
       ? { ...resolvedRules, decision: "ask" as const }
       : resolvedRules;
-  const mode = approvalModeFromPreference(await ctx.trust.loadAutoReviewPreference());
+  const spaceMode = approvalModeFromPreference(await ctx.trust.loadAutoReviewPreference());
+  const isUserComputer = USER_COMPUTER_TOOLS.has(name);
+  // Space "never ask" is for unattended sandboxes; a real desktop still goes through Auto's
+  // judge (or Ask when no checker). Explicit `/pc allow` or RAKAZO_USER_COMPUTER_APPROVAL=never
+  // is what fully opens one machine.
+  const mode = isUserComputer && spaceMode === "never" ? "auto" : spaceMode;
   const reviewable = mode === "auto" && !requiresMandatoryApproval;
   const injectedReview = reviewable ? deps.autoReview : undefined;
   const reviewSettings = !reviewable || injectedReview ? null : await ctx.trust.loadApprovalModel();
@@ -316,22 +329,32 @@ export async function gateToolCall(
             ),
           )
         : false));
-  const plan = USER_COMPUTER_TOOLS.has(name)
-    ? await userComputerGate(ctx, approvalResolved.decision === "deny", name, args)
-    : planActionGate({
+  const plan = isUserComputer
+    ? await userComputerGate(ctx, {
+        blocked: approvalResolved.decision === "deny",
+        name,
+        args,
         resolved: approvalResolved,
         mode,
-        mandatory: requiresMandatoryApproval,
-        steerable:
-          guardedInNeverAsk && mode === "never"
-            ? !ctx.source.ownerStartedRun || (await isRunTainted(ctx))
-            : undefined,
-        consequential: requiresApprovalByDefault,
-        reviewOnly: connectorReadGated,
         checkerConfigured,
-        newDestination: siteGate === "new",
-        purchase: paying,
-      });
+      })
+    : name === USER_COMPUTER_POLICY_TOOL
+      ? // Reading the policy is not a change; every other action always shows a card.
+        userComputerPolicyGate(approvalResolved.decision === "deny", args)
+      : planActionGate({
+          resolved: approvalResolved,
+          mode: spaceMode,
+          mandatory: requiresMandatoryApproval,
+          steerable:
+            guardedInNeverAsk && spaceMode === "never"
+              ? !ctx.source.ownerStartedRun || (await isRunTainted(ctx))
+              : undefined,
+          consequential: requiresApprovalByDefault,
+          reviewOnly: connectorReadGated,
+          checkerConfigured,
+          newDestination: siteGate === "new",
+          purchase: paying,
+        });
   // Nobody is there to approve a purchase a webhook run reaches.
   if (paying && run.trigger === "webhook" && plan !== "deny") {
     await auditToolCall(ctx, name, "denied", { reason: "purchase_unattended" });
@@ -444,9 +467,16 @@ export async function gateToolCall(
   }
 
   const runAutoReview = async () => {
+    // The judge already sees userTask (this turn's prompt). For user computers also put the
+    // resolved machine alias and deviceKey in args so the model can tell which desktop it is.
+    let reviewArgs = args;
+    if (isUserComputer) {
+      const target = await userComputerReviewTarget(ctx, args);
+      if (target) reviewArgs = { ...args, computer: target.computer, deviceKey: target.deviceKey };
+    }
     const judged = await reviewToolCall(ctx, {
       name,
-      args,
+      args: reviewArgs,
       connectorKind,
       newSite: siteGate === "new",
       fetchUrl,

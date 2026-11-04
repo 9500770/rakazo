@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { approvalDetailLength, buildApprovalAskBlock } from "./approval-ask.js";
 
 describe("buildApprovalAskBlock", () => {
@@ -336,5 +336,49 @@ describe("approval card arguments", () => {
     );
     if (block.kind !== "ask") throw new Error("expected ask block");
     expect(block.detail?.split("\n")).toContain("to_email: f@example.test");
+  });
+});
+
+describe("user computer approval buttons", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("offers a single run for a command, which a space grant never covers", () => {
+    const block = buildApprovalAskBlock("effect-1", "user_computer_shell", { command: "ls" }, []);
+    expect(block).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
+  it("offers the space grant for an app, which reads it back", () => {
+    const block = buildApprovalAskBlock("effect-1", "user_computer_observe", { app: "Mail" }, []);
+    expect(block).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow in this space" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
+  it("offers a single run under always mode, where a space grant would never count", () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "always");
+    const shell = buildApprovalAskBlock("effect-1", "user_computer_shell", { command: "ls" }, []);
+    expect(shell).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+    const screen = buildApprovalAskBlock("effect-2", "user_computer_observe", { app: "Mail" }, []);
+    expect(screen).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
   });
 });

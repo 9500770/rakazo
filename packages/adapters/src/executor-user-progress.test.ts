@@ -786,12 +786,17 @@ describe("notes that can't be posted as messages", () => {
   });
 
   it("posts one heads-up at once once a fresh turn calls a browser or desktop tool", async () => {
-    const sent = async (trigger: string, step: string, graphical = true) => {
+    const sent = async (
+      trigger: string,
+      step: string,
+      graphical = true,
+      stepArgs: Record<string, unknown> = {},
+    ) => {
       const { messages } = await runTurn("", false, undefined, [], "fyi", {
         trigger,
         graphical,
         runtime: async function* (request) {
-          await request.executeTool!(step, {}, "call-0").catch(() => undefined);
+          await request.executeTool!(step, stepArgs, "call-0").catch(() => undefined);
           for (const [index, message] of [
             "This will take a few minutes.",
             "Still going.",
@@ -806,9 +811,9 @@ describe("notes that can't be posted as messages", () => {
     const headsUp = ["This will take a few minutes."];
     expect(await sent("user", "computer_observe")).toEqual(headsUp);
     expect(await sent("messaging", "browser_snapshot")).toEqual(headsUp);
+    expect(await sent("user", "shell", true, { command: "sleep 90" })).toEqual(headsUp);
     // Other steps, tools this computer lacks, and runs nobody is waiting on keep the
     // fresh-turn rule.
-    expect(await sent("user", "shell")).toEqual([]);
     expect(await sent("user", "browser_snapshot", false)).toEqual([]);
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"])
       expect(await sent(trigger, "browser_snapshot")).toEqual([]);

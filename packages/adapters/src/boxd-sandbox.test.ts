@@ -154,10 +154,17 @@ describe("boxd computers", () => {
       { type: "stderr", data: "broken\n" },
       { type: "exit", code: 3 },
     ]);
-    expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 50 })).toEqual([
-      { type: "stderr", data: "command timed out after 50 ms\n" },
-      { type: "exit", code: 124 },
-    ]);
+    const previousCeiling = process.env.SANDBOX_BACKGROUND_CEILING_MS;
+    process.env.SANDBOX_BACKGROUND_CEILING_MS = "50";
+    try {
+      expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 50 })).toEqual([
+        { type: "stderr", data: "command timed out after 50 ms\n" },
+        { type: "exit", code: 124 },
+      ]);
+    } finally {
+      if (previousCeiling === undefined) delete process.env.SANDBOX_BACKGROUND_CEILING_MS;
+      else process.env.SANDBOX_BACKGROUND_CEILING_MS = previousCeiling;
+    }
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 20);
     expect(
@@ -172,6 +179,160 @@ describe("boxd computers", () => {
       { type: "exit", code: 130 },
     ]);
     expect(boxd.running.size).toBe(0);
+  });
+
+  it("hands a streamed command past timeoutMs to the background until it exits", async () => {
+    const previousCeiling = process.env.SANDBOX_BACKGROUND_CEILING_MS;
+    process.env.SANDBOX_BACKGROUND_CEILING_MS = "5000";
+    onTestFinished(() => {
+      if (previousCeiling === undefined) delete process.env.SANDBOX_BACKGROUND_CEILING_MS;
+      else process.env.SANDBOX_BACKGROUND_CEILING_MS = previousCeiling;
+    });
+
+    const boxd = new FakeBoxd();
+    boxd.snapshots.set(BOXD_COMPUTER_SNAPSHOT, "ready");
+    let releaseExit: () => void = () => undefined;
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    let live = false;
+    const base = boxd.client();
+    const encoder = new TextEncoder();
+    const provider = new BoxdSandboxProvider({ apiKey: "test-key" }, {
+      ...base,
+      machines: {
+        ...base.machines,
+        streamExec: (id, params) => {
+          if (!live) return base.machines.streamExec(id, params);
+          let finish!: (code: number) => void;
+          const exited = new Promise<number>((resolve) => {
+            finish = resolve;
+          });
+          void exitGate.then(() => finish(0));
+          return {
+            stdout: {
+              async *[Symbol.asyncIterator]() {
+                yield encoder.encode("code: ABCD-1234\n");
+                await exitGate;
+                yield encoder.encode("done\n");
+              },
+            },
+            stderr: {
+              async *[Symbol.asyncIterator]() {},
+            },
+            wait: () => exited,
+            close: () => finish(124),
+          } as unknown as ReturnType<typeof base.machines.streamExec>;
+        },
+      },
+    });
+    const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
+    live = true;
+    const seenPromise = events(
+      provider,
+      computer,
+      { argv: ["gh", "auth", "login", "--web"], timeoutMs: 50 },
+      ctx,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    releaseExit();
+    expect(await seenPromise).toEqual([
+      { type: "stdout", data: "code: ABCD-1234\n" },
+      { type: "stdout", data: "done\n" },
+      { type: "exit", code: 0 },
+    ]);
+  });
+
+  it("kills a streamed command that exceeds the background ceiling", async () => {
+    const previousCeiling = process.env.SANDBOX_BACKGROUND_CEILING_MS;
+    process.env.SANDBOX_BACKGROUND_CEILING_MS = "80";
+    onTestFinished(() => {
+      if (previousCeiling === undefined) delete process.env.SANDBOX_BACKGROUND_CEILING_MS;
+      else process.env.SANDBOX_BACKGROUND_CEILING_MS = previousCeiling;
+    });
+
+    const boxd = new FakeBoxd();
+    const provider = fakeBoxdProvider(boxd);
+    const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
+    expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 50 })).toEqual([
+      { type: "stderr", data: "command timed out after 80 ms\n" },
+      { type: "exit", code: 124 },
+    ]);
+    expect(boxd.running.size).toBe(0);
+  });
+
+  it("kills a streamed command at a ceiling below the soft timeout", async () => {
+    const previousCeiling = process.env.SANDBOX_BACKGROUND_CEILING_MS;
+    process.env.SANDBOX_BACKGROUND_CEILING_MS = "80";
+    onTestFinished(() => {
+      if (previousCeiling === undefined) delete process.env.SANDBOX_BACKGROUND_CEILING_MS;
+      else process.env.SANDBOX_BACKGROUND_CEILING_MS = previousCeiling;
+    });
+
+    const boxd = new FakeBoxd();
+    const provider = fakeBoxdProvider(boxd);
+    const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
+    expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 5_000 })).toEqual(
+      [{ type: "stderr", data: "command timed out after 80 ms\n" }, { type: "exit", code: 124 }],
+    );
+    expect(boxd.running.size).toBe(0);
+  });
+
+  it("yields stdout chunks before the command exits", async () => {
+    const boxd = new FakeBoxd();
+    boxd.snapshots.set(BOXD_COMPUTER_SNAPSHOT, "ready");
+    let releaseExit: () => void = () => undefined;
+    const exitGate = new Promise<void>((resolve) => {
+      releaseExit = resolve;
+    });
+    let live = false;
+    const base = boxd.client();
+    const encoder = new TextEncoder();
+    const provider = new BoxdSandboxProvider({ apiKey: "test-key" }, {
+      ...base,
+      machines: {
+        ...base.machines,
+        streamExec: (id, params) => {
+          if (!live) return base.machines.streamExec(id, params);
+          let finish!: (code: number) => void;
+          const exited = new Promise<number>((resolve) => {
+            finish = resolve;
+          });
+          void exitGate.then(() => finish(0));
+          return {
+            stdout: {
+              async *[Symbol.asyncIterator]() {
+                yield encoder.encode("code: ABCD-1234\n");
+                await exitGate;
+              },
+            },
+            stderr: {
+              async *[Symbol.asyncIterator]() {},
+            },
+            wait: () => exited,
+            close: () => finish(124),
+          } as unknown as ReturnType<typeof base.machines.streamExec>;
+        },
+      },
+    });
+    const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
+    live = true;
+    const iterator = provider
+      .execute(computer, { argv: ["gh", "auth", "login", "--web"], timeoutMs: 5_000 }, ctx)
+      [Symbol.asyncIterator]();
+
+    const first = await iterator.next();
+    expect(first.value).toEqual({ type: "stdout", data: "code: ABCD-1234\n" });
+    let exitSeen = false;
+    const rest = (async () => {
+      const next = await iterator.next();
+      exitSeen = true;
+      return next;
+    })();
+    await Promise.resolve();
+    expect(exitSeen).toBe(false);
+    releaseExit();
+    await expect(rest).resolves.toEqual({ value: { type: "exit", code: 0 }, done: false });
   });
 
   it("waits for the machine's HTTPS proxy, then serves screens through it with a per-screen token", async () => {

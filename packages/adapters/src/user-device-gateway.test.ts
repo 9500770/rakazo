@@ -58,10 +58,24 @@ function fakePrisma() {
         for (const id of ids(where)) if (devices.has(id)) Object.assign(devices.get(id)!, data);
         return { count: 0 };
       },
-      findMany: async ({ where }: { where: { id: { in: string[] } } }) =>
-        ids(where)
+      findMany: async ({
+        where,
+      }: {
+        where: { id?: { in: string[] } | string; userId?: string; revokedAt?: Date | null };
+      }) => {
+        if (typeof where.userId === "string") {
+          return [...devices.values()]
+            .filter(
+              (row) =>
+                row.userId === where.userId &&
+                (where.revokedAt === null ? row.revokedAt === null : true),
+            )
+            .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
+        }
+        return ids(where)
           .map((id) => devices.get(id))
-          .filter((row) => row?.revokedAt),
+          .filter((row) => row?.revokedAt);
+      },
       findFirst: async ({ where }: { where: { userId: string; revokedAt: null } }) =>
         [...devices.values()].find((row) => row.userId === where.userId && !row.revokedAt) ?? null,
     },
@@ -81,6 +95,26 @@ function fakePrisma() {
       },
       findUnique: async ({ where }: { where: { deviceId: string } }) =>
         connections.get(where.deviceId) ?? null,
+      findMany: async ({
+        where,
+      }: {
+        where: { heartbeatAt: { gt: Date }; device: { userId: string } };
+      }) =>
+        [...connections.values()]
+          .filter((connection) => {
+            const device = devices.get(connection.deviceId);
+            return (
+              device &&
+              device.userId === where.device.userId &&
+              !device.revokedAt &&
+              connection.heartbeatAt > where.heartbeatAt.gt
+            );
+          })
+          .sort((a, b) => b.connectedAt.getTime() - a.connectedAt.getTime())
+          .map((row) => {
+            const device = devices.get(row.deviceId)!;
+            return { ...row, device: { name: device.name, platform: device.platform } };
+          }),
       findFirst: async ({
         where,
       }: {
@@ -265,6 +299,73 @@ describe("user device gateway in the holding process", () => {
     await expect(devices.connected("user-1")).resolves.toBeNull();
     await expect(devices.pairedSince("user-1")).resolves.toEqual(new Date(0));
     await expect(devices.pairedSince("user-2")).resolves.toBeNull();
+  });
+
+  it("lists every online device newest first and resolves a reference to one of them", async () => {
+    const { hub, devices, deviceRows, connections } = setup();
+    const deskTop = { id: "dev-desk0001", userId: "user-1", name: "Desk PC", platform: "darwin" };
+    const laptop = { id: "dev-lap0002", userId: "user-1", name: "MacBook", platform: "win32" };
+    for (const row of [deskTop, laptop])
+      deviceRows.set(row.id, {
+        ...row,
+        tokenHash: "x",
+        createdAt: new Date(0),
+        revokedAt: null,
+        lastSeenAt: null,
+      });
+    await hub.attach(deskTop, new FakeSocket());
+    await hub.attach(laptop, new FakeSocket());
+    connections.get(deskTop.id)!.connectedAt = new Date(2_000);
+    connections.get(laptop.id)!.connectedAt = new Date(1_000);
+    await expect(devices.connectedAll("user-1")).resolves.toEqual([
+      { deviceId: deskTop.id, name: "Desk PC", platform: "darwin", alias: "desk-pc-0001" },
+      { deviceId: laptop.id, name: "MacBook", platform: "win32", alias: "macbook-0002" },
+    ]);
+    // No reference keeps the latest; alias, full id, and exact name each pick their device.
+    await expect(devices.connectedDevice("user-1")).resolves.toMatchObject({
+      deviceId: deskTop.id,
+    });
+    await expect(devices.connectedDevice("user-1", "macbook-0002")).resolves.toMatchObject({
+      deviceId: laptop.id,
+    });
+    await expect(devices.connectedDevice("user-1", laptop.id)).resolves.toMatchObject({
+      deviceId: laptop.id,
+    });
+    await expect(devices.connectedDevice("user-1", "MacBook")).resolves.toMatchObject({
+      deviceId: laptop.id,
+    });
+    await expect(devices.connectedDevice("user-1", "office-pc")).resolves.toBeNull();
+    // Another user's devices are never listed or resolved.
+    await expect(devices.connectedAll("user-2")).resolves.toEqual([]);
+    await expect(devices.connectedDevice("user-2", "desk-pc-0001")).resolves.toBeNull();
+    // A stale heartbeat or a revoked device drops off the list.
+    connections.get(laptop.id)!.heartbeatAt = new Date(Date.now() - 10 * 60_000);
+    await expect(devices.connectedAll("user-1")).resolves.toHaveLength(1);
+    deviceRows.get(deskTop.id)!.revokedAt = new Date();
+    await expect(devices.connectedAll("user-1")).resolves.toEqual([]);
+    await expect(devices.connected("user-1")).resolves.toBeNull();
+  });
+
+  it("lists paired computers that are offline, and drops a revoked one", async () => {
+    const { devices, deviceRows } = setup();
+    const laptop = { id: "dev-lap0002", userId: "user-1", name: "MacBook", platform: "win32" };
+    deviceRows.set(laptop.id, {
+      ...laptop,
+      tokenHash: "x",
+      createdAt: new Date(1),
+      revokedAt: null,
+      lastSeenAt: null,
+    });
+    deviceRows.get(device.id)!.createdAt = new Date(0);
+    await expect(devices.pairedAll("user-1")).resolves.toEqual([
+      { deviceId: laptop.id, name: "MacBook", platform: "win32", alias: "macbook-0002" },
+      { deviceId: device.id, name: "Laptop", platform: "darwin", alias: "laptop-ce-1" },
+    ]);
+    await expect(devices.connectedAll("user-1")).resolves.toEqual([]);
+    deviceRows.get(laptop.id)!.revokedAt = new Date();
+    await expect(devices.pairedAll("user-1")).resolves.toEqual([
+      { deviceId: device.id, name: "Laptop", platform: "darwin", alias: "laptop-ce-1" },
+    ]);
   });
 
   it("fails an in-flight request when the device disconnects and never resends it", async () => {

@@ -12,6 +12,7 @@ import {
   parametersFor,
   prepareFleetArguments,
 } from "./pi-runtime-tool-parameters.js";
+import { toAgentTools } from "./pi-runtime-tools.js";
 
 describe("jsonSchemaParameters", () => {
   it("keeps the history query either/or guidance on the provider wire without a root union", () => {
@@ -514,5 +515,59 @@ describe("bot management tool parameters", () => {
   it("keeps the instruction text exactly as sent", () => {
     const args = { bot_id: "b1", instructions: "  Keep\n spacing ", expected_version: "v1" };
     expect(prepareFleetArguments("set_child_instructions", args)).toEqual(args);
+  });
+});
+
+describe("user computer tool parameters", () => {
+  const toolFor = (name: string) => {
+    const tool = builtinAgentTools.find((entry) => entry.name === name);
+    if (!tool) throw new Error(`missing ${name}`);
+    return tool;
+  };
+  const wireFor = (name: string) => JSON.parse(JSON.stringify(parametersFor(toolFor(name))));
+
+  it.each(["user_computer_shell", "user_computer_observe", "user_computer_act"])(
+    "%s offers computer as an optional 120-character alias",
+    (name) => {
+      const wire = wireFor(name);
+      expect(wire.properties.computer).toMatchObject({ type: "string", maxLength: 120 });
+      expect(wire.properties.computer.description).toContain("omit to use the default one");
+      expect(wire.required ?? []).not.toContain("computer");
+    },
+  );
+
+  it("keeps computer off the bot's own shell", () => {
+    expect(wireFor("shell").properties).not.toHaveProperty("computer");
+  });
+
+  it("offers auto on user_computer_policy in the catalog and the TypeBox wire schema", () => {
+    const catalog = toolFor("user_computer_policy").inputSchema as {
+      properties: { action: { enum: string[] } };
+    };
+    expect(catalog.properties.action.enum).toEqual(["list", "allow", "ask", "auto", "revoke"]);
+    expect(wireFor("user_computer_policy").properties.action.enum).toEqual([
+      "list",
+      "allow",
+      "ask",
+      "auto",
+      "revoke",
+    ]);
+  });
+
+  it("carries a chosen computer through argument normalization", () => {
+    const prepared = (name: string, args: Record<string, unknown>) =>
+      toAgentTools([toolFor(name)], {} as never)[0]!.prepareArguments?.(args);
+    expect(prepared("user_computer_shell", { command: "ls", computer: "desk-pc-0001" })).toEqual({
+      command: "ls",
+      computer: "desk-pc-0001",
+    });
+    expect(prepared("user_computer_observe", { app: "Mail", computer: "desk-pc-0001" })).toEqual({
+      app: "Mail",
+      computer: "desk-pc-0001",
+    });
+    // The bot's own computer is a single machine; a stray computer argument is dropped there.
+    expect(prepared("shell", { command: "ls", computer: "desk-pc-0001" })).toEqual({
+      command: "ls",
+    });
   });
 });

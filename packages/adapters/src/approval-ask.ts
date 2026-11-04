@@ -12,12 +12,29 @@ import {
   toolRequiresExplicitApproval,
 } from "@rakazo/core";
 import { urlSite } from "@rakazo/core/egress";
-import { USER_COMPUTER_SCREEN_TOOLS, userComputerAppName } from "./user-computer-tools.js";
+import { userComputerApprovalMode } from "./user-computer-approval.js";
+import {
+  USER_COMPUTER_SCREEN_TOOLS,
+  USER_COMPUTER_SHELL_TOOL,
+  userComputerAppName,
+} from "./user-computer-tools.js";
 
 export const MAX_APPROVAL_SUMMARY_LENGTH = 500;
 export const MAX_APPROVAL_DETAIL_LENGTH = 4_000;
 /** Longer fetch URLs are refused, so an approval card always shows the whole URL it sends. */
 export const MAX_FETCH_URL_LENGTH = 2_048;
+
+/**
+ * The buttons on a user's-computer approval. Only screen control reads a space grant back, so a
+ * shell card and every card under `always` offer a single run instead of a button that would
+ * quietly do nothing.
+ */
+function userComputerAskActions(toolName: string) {
+  const deny = { id: "deny", label: "Deny" };
+  return toolName === USER_COMPUTER_SHELL_TOOL || userComputerApprovalMode() === "always"
+    ? [{ id: "allow", label: "Allow once" }, deny]
+    : [{ id: "allow", label: "Allow in this space" }, deny];
+}
 
 /** A fleet card built from the resolved request: a title and the lines under it. */
 /** `onceOnly`: the card never offers Always allow, as for a purchase. */
@@ -130,8 +147,32 @@ export function buildApprovalAskBlock(
           }
         : {}),
       status: "pending",
+      actions: userComputerAskActions(toolName),
+    };
+  }
+  if (toolName === "user_computer_policy") {
+    const action = String(args.action ?? "");
+    const where =
+      typeof args.computer === "string" && args.computer.trim()
+        ? args.computer.trim()
+        : "every computer";
+    const minutes = typeof args.minutes === "number" ? args.minutes : undefined;
+    const text =
+      action === "allow"
+        ? `Run on ${where} without asking?`
+        : action === "revoke"
+          ? `Take back access to ${where}?`
+          : `Ask before using ${where}?`;
+    return {
+      kind: "ask",
+      approvalEffectId: effectId,
+      text,
+      ...(action === "allow"
+        ? { detail: minutes ? `For ${minutes} minutes` : "Until revoked" }
+        : {}),
+      status: "pending",
       actions: [
-        { id: "allow", label: "Allow in this space" },
+        { id: "allow", label: "Allow once" },
         { id: "deny", label: "Deny" },
       ],
     };
@@ -148,10 +189,7 @@ export function buildApprovalAskBlock(
       ),
       detailFormat: "code",
       status: "pending",
-      actions: [
-        { id: "allow", label: "Allow in this space" },
-        { id: "deny", label: "Deny" },
-      ],
+      actions: userComputerAskActions(toolName),
     };
   }
   const fetchSite = webFetchSite(toolName, args);

@@ -45,6 +45,7 @@ import {
 import { fleetPrepareDeps } from "./run-model.js";
 import { BUILTIN_AGENT_TOOL_NAMES, FLEET_WRITE_TOOL_NAMES_SET } from "./run-tool-selection.js";
 import { USER_COMPUTER_TOOLS } from "./run-tools-user-computer.js";
+import { USER_COMPUTER_POLICY_TOOL } from "./run-tools-user-computer-policy.js";
 import { SCHEDULE_TOOL_NAMES } from "./schedule-tools.js";
 import { SKILL_TOOL_NAMES } from "./skill-tools.js";
 import { argumentGiven } from "./update-bot-patch.js";
@@ -324,6 +325,15 @@ export async function prepareToolRequest(
       return { error: "The user's computer is not available in this run." };
     if (isSubagentToolExecution(executionId))
       return { error: "Helpers cannot use the user's computer." };
+  }
+  if (name === USER_COMPUTER_POLICY_TOOL) {
+    // A routine, channel or webhook never widens (or narrows) what a bot may reach: only the
+    // person, in a chat they started, decides that.
+    if (!ctx.source.ownerStartedRun)
+      return { error: "Computer permissions change only in a chat the user started." };
+    if (isSubagentToolExecution(executionId))
+      return { error: "Helpers cannot change computer permissions." };
+    if (!deps.userDevices) return { error: "The user's computer is not available in this run." };
   }
   const fleetWrite =
     FLEET_WRITE_TOOL_NAMES_SET.has(name) ||

@@ -460,7 +460,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "shell",
     description:
-      "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. A command is stopped after a few minutes, so on Linux or macOS start longer work, such as a coding agent CLI, as its own statement `nohup <command> < /dev/null > <log> 2>&1 &`, never after `&&`, and read the log to follow it.",
+      "Run a command inside this bot's computer. cwd defaults to the bot's folder on a Team Computer and the workspace root on a Private Computer. Output can arrive while the command is still running; tell the user any one-time code or sign-in URL in that output. A quiet command keeps running in the background and its final output arrives when it exits, so start long work such as a coding agent CLI directly.",
     inputSchema: {
       type: "object",
       properties: {
@@ -473,12 +473,18 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "user_computer_shell",
     description:
-      "Run a command on the user's own computer. Use only when the task needs their local files, credentials, or network. cwd defaults to their home folder and must stay inside it.",
+      "Run a command on the user's own computer. Use only when the task needs their local files, credentials, or network. cwd defaults to their home folder and must stay inside it. The command stops at the ordinary timeout; it is not handed off to keep running.",
     inputSchema: {
       type: "object",
       properties: {
         command: { type: "string" },
         cwd: { type: "string" },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
+        },
       },
       required: ["command"],
     },
@@ -492,6 +498,12 @@ export const builtinAgentTools: ConnectorTool[] = [
       properties: {
         app: { type: "string", minLength: 1, maxLength: 200 },
         query: { type: "string", maxLength: 200 },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
+        },
       },
       required: ["app"],
     },
@@ -535,8 +547,42 @@ export const builtinAgentTools: ConnectorTool[] = [
             required: ["kind"],
           },
         },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description:
+            "alias of the user's connected computer to run on; omit to use the default one",
+        },
       },
       required: ["app", "actions"],
+    },
+  },
+  {
+    name: "user_computer_policy",
+    description:
+      "See or set whether this bot may use the user's computers without asking. One policy per bot and computer; without one the space's approval mode decides. Grants can expire.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["list", "allow", "ask", "auto", "revoke"] },
+        computer: {
+          type: "string",
+          maxLength: 120,
+          description: "alias of the computer; omit to cover every computer",
+        },
+        minutes: {
+          type: "integer",
+          minimum: 1,
+          maximum: 43200,
+          description: "how long an allow lasts; omit to keep it until revoked",
+        },
+        bot: {
+          type: "string",
+          maxLength: 200,
+          description: "another bot in this space by name or id; omit for this bot",
+        },
+      },
+      required: ["action"],
     },
   },
   {

@@ -3265,13 +3265,11 @@ describe("user_computer_shell", () => {
     expect(requests).toEqual([]);
   });
 
-  it("asks first, even in never-ask mode with an allow rule, then runs without asking again in this space", async () => {
+  it("asks first in ask mode, and asks again for the next command", async () => {
     const { gateway, requests } = devices();
     const f = fixture({
       ...ownRun,
       userDevices: gateway,
-      skipApprovals: true,
-      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "user_computer_shell" }],
     });
     f.setCalls([call("ssh pi.local hostname")]);
     await f.run();
@@ -3286,7 +3284,7 @@ describe("user_computer_shell", () => {
             text: "Run on your computer?",
             detail: "ssh pi.local hostname",
             actions: [
-              { id: "allow", label: "Allow in this space" },
+              { id: "allow", label: "Allow once" },
               { id: "deny", label: "Deny" },
             ],
           }),
@@ -3296,7 +3294,12 @@ describe("user_computer_shell", () => {
 
     f.effects[0]!.status = "approved";
     await f.run();
-    expect(f.results.at(-1)).toEqual({ stdout: "pi.local\n", stderr: "", code: 0 });
+    expect(f.results.at(-1)).toEqual({
+      stdout: "pi.local\n",
+      stderr: "",
+      code: 0,
+      computer: "laptop-ce-1",
+    });
     expect(requests.map(({ userId, request }) => [userId, request.method])).toEqual([
       ["user-1", "provision"],
       ["user-1", "environment"],
@@ -3310,20 +3313,76 @@ describe("user_computer_shell", () => {
 
     f.setCalls([call("ssh pi.local uptime", "call-2")]);
     await f.run();
-    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
-    // Any chat of this user in this space counts, not just this one.
-    expect(f.prisma.externalEffect.findFirst).toHaveBeenLastCalledWith({
-      where: {
-        spaceId: "space-1",
-        status: { in: ["approved", "executing", "completed", "uncertain"] },
-        createdAt: { gte: new Date(0) },
-        run: { userId: "user-1" },
-        kind: "user_computer_shell",
-      },
-      select: { id: true },
+    // A command approval covers that one command: the next one asks again, on any computer.
+    expect(f.pauseRunForInput).toHaveBeenCalledTimes(2);
+    expect(isApprovalPausedResult(f.results.at(-1))).toBe(true);
+    expect(f.prisma.externalEffect.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("runs under never-ask when an always-allow rule matches (space never maps to auto)", async () => {
+    const { gateway, requests } = devices();
+    const f = fixture({
+      ...ownRun,
+      userDevices: gateway,
+      skipApprovals: true,
+      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "user_computer_shell" }],
     });
-    expect(f.results.at(-1)).toEqual({ stdout: "pi.local\n", stderr: "", code: 0 });
-    expect(f.effects.map((effect) => effect.status)).toEqual(["completed", "completed"]);
+    f.setCalls([call("ssh pi.local hostname")]);
+    await f.run();
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
+    expect(f.results.at(-1)).toEqual({
+      stdout: "pi.local\n",
+      stderr: "",
+      code: 0,
+      computer: "laptop-ce-1",
+    });
+    expect(requests.map(({ request }) => request.method)).toEqual([
+      "provision",
+      "environment",
+      "execute",
+    ]);
+  });
+
+  it("lets Auto Review pass, ask, or fail closed on a shell command", async () => {
+    for (const [decision, expectsAsk] of [
+      ["pass", false],
+      ["ask", true],
+      ["error", true],
+    ] as const) {
+      reviewMock.mockReset();
+      reviewMock.mockResolvedValue({
+        decision,
+        reason: `review-${decision}`,
+        model: "mock/model",
+      });
+      const { gateway, requests } = devices();
+      const f = fixture({
+        ...ownRun,
+        userDevices: gateway,
+        autoReview: true,
+        prompt: "List files on my laptop",
+      });
+      f.setCalls([call("ls ~/Documents")]);
+      await f.run();
+      expect(reviewMock).toHaveBeenCalledOnce();
+      const reviewed = reviewMock.mock.calls[0]![0] as {
+        userTask: string;
+        args: Record<string, unknown>;
+      };
+      expect(reviewed.userTask).toContain("List files on my laptop");
+      expect(reviewed.args).toMatchObject({
+        command: "ls ~/Documents",
+        computer: "laptop-ce-1",
+        deviceKey: "device-1",
+      });
+      if (expectsAsk) {
+        expect(isApprovalPausedResult(f.results[0])).toBe(true);
+        expect(requests).toEqual([]);
+      } else {
+        expect(f.pauseRunForInput).not.toHaveBeenCalled();
+        expect(f.results.at(-1)).toMatchObject({ code: 0, computer: "laptop-ce-1" });
+      }
+    }
   });
 
   it("asks again after the computer is removed and paired again", async () => {
@@ -3357,15 +3416,10 @@ describe("user_computer_shell", () => {
   });
 
   it("tells the bot when the desktop went offline after the tool was offered", async () => {
+    // A deployment told never to ask, so the check under test is the one at execution.
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "never");
     const { gateway, requests } = devices();
     const f = fixture({ ...ownRun, userDevices: gateway });
-    f.effects.push({
-      id: "earlier",
-      kind: "user_computer_shell",
-      idempotencyKey: "earlier-key",
-      status: "completed",
-      request: { command: "hostname" },
-    });
     gateway.connected.mockResolvedValueOnce(device).mockResolvedValueOnce(null);
     f.setCalls([call("ls")]);
     await f.run();
@@ -3373,6 +3427,7 @@ describe("user_computer_shell", () => {
       { error: "The user's computer is not connected. Ask them to open the Rakazo desktop app." },
     ]);
     expect(requests).toEqual([]);
+    vi.unstubAllEnvs();
   });
 });
 
@@ -3449,7 +3504,6 @@ describe("user computer screen control", () => {
     const f = fixture({
       ...ownRun,
       userDevices: gateway,
-      skipApprovals: true,
       secrets: ["sk-fake-secret"],
     });
     f.setCalls([observe("TextEdit")]);
@@ -3466,7 +3520,11 @@ describe("user computer screen control", () => {
     const text = JSON.stringify(f.results.at(-1));
     expect(text).toContain("AXTextArea");
     expect(text).not.toContain("sk-fake-secret");
-    expect(f.effects[0]!.result).toEqual({ app: "TextEdit", title: "Notes for [redacted]" });
+    expect(f.effects[0]!.result).toEqual({
+      app: "TextEdit",
+      computer: "laptop-ce-1",
+      title: "Notes for [redacted]",
+    });
 
     f.setCalls([
       {
@@ -3567,6 +3625,7 @@ describe("a click that completes a purchase on a website", () => {
         confirmationsOverride: true,
       },
     ] as const) {
+      reviewMock.mockReset();
       const page = pageBrowser();
       const f = fixture({ builtin: true, browser: page.provider, ...options } as never);
       f.setCalls([payCall()]);

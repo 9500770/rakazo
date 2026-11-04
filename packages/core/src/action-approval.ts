@@ -51,6 +51,8 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
 ]);
 const EXPLICIT_APPROVAL_BUILTIN_TOOLS = new Set([
   "respond_agent_connection",
+  // A policy on the user's computer is a security boundary: the card is Allow once or Deny.
+  "user_computer_policy",
   "create_space",
   "set_child_instructions",
   "set_child_bot_model",
