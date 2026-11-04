@@ -78,7 +78,9 @@ export function userComputerOwner(input: {
  * even after that, `never` runs without asking. The space's mode never loosens it. These tools run
  * only in the user's own runs (see userComputerOwner), so any effect of them past "intended" in
  * this space traces back to that approval. Removing every paired computer ends it, so pairing again
- * asks again. Screen control is approved per app.
+ * asks again. Screen control is approved per app. A shell command is not remembered that way: it
+ * asks on every call unless a per-computer grant or the deployment mode allows it, because an
+ * approval that carried over to every computer was access nobody could see or take back.
  */
 export async function userComputerGate(
   ctx: RunContext,
@@ -96,6 +98,10 @@ export async function userComputerGate(
   const mode = userComputerApprovalMode();
   if (mode === "never") return "allow";
   if (mode === "always") return "ask";
+  // A shell command follows the configuration alone: an explicit row for this bot and computer
+  // (checked above) or a deployment told never to ask runs it without a card. An earlier approval
+  // is not a standing grant, so one "Allow" on one machine cannot open every other computer.
+  if (!USER_COMPUTER_SCREEN_TOOLS.has(name)) return "ask";
   const { deps, run } = ctx;
   const pairedSince = await deps.userDevices?.pairedSince(run.userId);
   if (!pairedSince) return "ask";
@@ -111,13 +117,6 @@ export async function userComputerGate(
     // One bot's "Allow in this space" is not another bot's.
     run: { userId: run.userId, ...(ctx.bot?.id ? { botId: ctx.bot.id } : {}) },
   };
-  if (!USER_COMPUTER_SCREEN_TOOLS.has(name)) {
-    const allowed = await deps.prisma.externalEffect.findFirst({
-      where: { ...where, kind: USER_COMPUTER_SHELL_TOOL },
-      select: { id: true },
-    });
-    return allowed ? "allow" : "ask";
-  }
   const app = userComputerAppName(args.app).toLowerCase();
   if (!app) return "ask";
   // Every screen action records an effect, so page through them rather than cap the search.

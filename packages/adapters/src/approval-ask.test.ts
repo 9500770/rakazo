@@ -344,8 +344,18 @@ describe("user computer approval buttons", () => {
     vi.unstubAllEnvs();
   });
 
-  it("offers the space grant by default", () => {
+  it("offers a single run for a command, which a space grant never covers", () => {
     const block = buildApprovalAskBlock("effect-1", "user_computer_shell", { command: "ls" }, []);
+    expect(block).toMatchObject({
+      actions: [
+        { id: "allow", label: "Allow once" },
+        { id: "deny", label: "Deny" },
+      ],
+    });
+  });
+
+  it("offers the space grant for an app, which reads it back", () => {
+    const block = buildApprovalAskBlock("effect-1", "user_computer_observe", { app: "Mail" }, []);
     expect(block).toMatchObject({
       actions: [
         { id: "allow", label: "Allow in this space" },

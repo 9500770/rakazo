@@ -32,7 +32,7 @@ export const yourComputer: Sandbox = {
     {
       heading: "Two ways to let bots use your computer",
       paragraphs: [
-        "Let bots use this computer works when the desktop app is connected to Rakazo Cloud or another Rakazo server. The app's own local server uses Use this Mac instead. The bot keeps its own computer and gets your computer as an extra place to work. It asks you before its first command in a space and before it first uses each app, in every approval mode, and you answer Allow in this space or Deny.",
+        "Let bots use this computer works when the desktop app is connected to Rakazo Cloud or another Rakazo server. The app's own local server uses Use this Mac instead. The bot keeps its own computer and gets your computer as an extra place to work. It asks you before it first uses each app, in every approval mode, and your Allow in this space covers the rest of the apps in that space. A command asks every time, on every computer, even after you approved an earlier one, so an approval on one machine never opens another. To stop the asking for one bot on one computer, tell that bot to allow that computer.",
         "Use this Mac (Use this computer on Windows and Linux) is for when the desktop app runs Rakazo itself on your machine. Your computer then replaces the bot's computer entirely, and bots run commands on it without asking.",
       ],
       image: true,

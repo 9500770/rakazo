@@ -8,7 +8,9 @@
  * for one task is taken back on its own instead of lasting as long as the pairing.
  *
  * RAKAZO_USER_COMPUTER_APPROVAL:
- * - `ask` (default) asks the first time per shell or app in a space, then honors "Allow in this space".
+ * - `ask` (default) asks the first time per app in a space and then honors "Allow in this space".
+ *   A shell command is never remembered that way: it asks on every call unless a per-computer
+ *   grant (user_computer_policy) allows that computer.
  * - `always` asks every time, even when this space allowed it before.
  * - `never` runs without asking; a block rule still refuses, and the desktop's own permission still applies.
  */

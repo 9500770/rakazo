@@ -198,26 +198,43 @@ describe("userComputerGate approval mode", () => {
     ).resolves.toBe("deny");
   });
 
-  it("counts only approvals inside the grant window when one is set", async () => {
+  it("counts only app approvals inside the grant window when one is set", async () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_GRANT_TTL", "30");
-    const findFirst = vi.fn(async (_args: unknown) => null);
+    const findMany = vi.fn(async (_args: unknown) => []);
+    const ctx = {
+      deps: {
+        userDevices: { pairedSince: async () => new Date(0) },
+        prisma: { externalEffect: { findMany } },
+      },
+      run: { spaceId: "space-1", userId: "user-1" },
+    } as unknown as RunContext;
+    await expect(
+      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
+    ).resolves.toBe("ask");
+    const where = (
+      findMany.mock.calls[0]?.[0] as { where: { createdAt: { gte: Date } } } | undefined
+    )?.where;
+    if (!where) throw new Error("the gate looked up earlier approvals");
+    const age = Date.now() - where.createdAt.gte.getTime();
+    expect(age).toBeGreaterThan(29 * 60_000);
+    expect(age).toBeLessThan(31 * 60_000);
+  });
+
+  it("asks for a command even after this space approved one, and never reads them back", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "");
+    const findFirst = vi.fn(async (_args: unknown) => ({ id: "earlier" }));
     const ctx = {
       deps: {
         userDevices: { pairedSince: async () => new Date(0) },
         prisma: { externalEffect: { findFirst, findMany: vi.fn(async () => []) } },
       },
       run: { spaceId: "space-1", userId: "user-1" },
+      bot: { id: "bot-1" },
     } as unknown as RunContext;
     await expect(
       userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
     ).resolves.toBe("ask");
-    const where = (
-      findFirst.mock.calls[0]?.[0] as { where: { createdAt: { gte: Date } } } | undefined
-    )?.where;
-    if (!where) throw new Error("the gate looked up earlier approvals");
-    const age = Date.now() - where.createdAt.gte.getTime();
-    expect(age).toBeGreaterThan(29 * 60_000);
-    expect(age).toBeLessThan(31 * 60_000);
+    expect(findFirst).not.toHaveBeenCalled();
   });
 
   it("asks once per app in ask mode, the default", async () => {
@@ -532,10 +549,11 @@ describe("userComputerGate policy rows", () => {
     ).resolves.toBe("ask");
   });
 
-  it("counts an earlier space grant only for the bot that was allowed", async () => {
+  it("asks for a command when no row allows that computer, whatever the space approved before", async () => {
     const { ctx, findFirst } = policyContext([], false);
-    await userComputerGate(ctx, false, "user_computer_shell", { command: "ls" });
-    const where = (findFirst.mock.calls[0]?.[0] as { where: { run: unknown } } | undefined)?.where;
-    expect(where?.run).toEqual({ userId: "user-1", botId: "bot-1" });
+    await expect(
+      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+    ).resolves.toBe("ask");
+    expect(findFirst).not.toHaveBeenCalled();
   });
 });

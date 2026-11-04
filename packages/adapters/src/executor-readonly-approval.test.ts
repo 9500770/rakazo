@@ -3265,7 +3265,7 @@ describe("user_computer_shell", () => {
     expect(requests).toEqual([]);
   });
 
-  it("asks first, even in never-ask mode with an allow rule, then runs without asking again in this space", async () => {
+  it("asks first, even in never-ask mode with an allow rule, and asks again for the next command", async () => {
     const { gateway, requests } = devices();
     const f = fixture({
       ...ownRun,
@@ -3286,7 +3286,7 @@ describe("user_computer_shell", () => {
             text: "Run on your computer?",
             detail: "ssh pi.local hostname",
             actions: [
-              { id: "allow", label: "Allow in this space" },
+              { id: "allow", label: "Allow once" },
               { id: "deny", label: "Deny" },
             ],
           }),
@@ -3315,26 +3315,10 @@ describe("user_computer_shell", () => {
 
     f.setCalls([call("ssh pi.local uptime", "call-2")]);
     await f.run();
-    expect(f.pauseRunForInput).toHaveBeenCalledOnce();
-    // Any chat of this user with this bot in this space counts, not just this one; a grant given
-    // to another bot is not this bot's.
-    expect(f.prisma.externalEffect.findFirst).toHaveBeenLastCalledWith({
-      where: {
-        spaceId: "space-1",
-        status: { in: ["approved", "executing", "completed", "uncertain"] },
-        createdAt: { gte: new Date(0) },
-        run: { userId: "user-1", botId: "bot-1" },
-        kind: "user_computer_shell",
-      },
-      select: { id: true },
-    });
-    expect(f.results.at(-1)).toEqual({
-      stdout: "pi.local\n",
-      stderr: "",
-      code: 0,
-      computer: "laptop-ce-1",
-    });
-    expect(f.effects.map((effect) => effect.status)).toEqual(["completed", "completed"]);
+    // A command approval covers that one command: the next one asks again, on any computer.
+    expect(f.pauseRunForInput).toHaveBeenCalledTimes(2);
+    expect(isApprovalPausedResult(f.results.at(-1))).toBe(true);
+    expect(f.prisma.externalEffect.findFirst).not.toHaveBeenCalled();
   });
 
   it("asks again after the computer is removed and paired again", async () => {
@@ -3368,15 +3352,10 @@ describe("user_computer_shell", () => {
   });
 
   it("tells the bot when the desktop went offline after the tool was offered", async () => {
+    // A deployment told never to ask, so the check under test is the one at execution.
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "never");
     const { gateway, requests } = devices();
     const f = fixture({ ...ownRun, userDevices: gateway });
-    f.effects.push({
-      id: "earlier",
-      kind: "user_computer_shell",
-      idempotencyKey: "earlier-key",
-      status: "completed",
-      request: { command: "hostname" },
-    });
     gateway.connected.mockResolvedValueOnce(device).mockResolvedValueOnce(null);
     f.setCalls([call("ls")]);
     await f.run();
@@ -3384,6 +3363,7 @@ describe("user_computer_shell", () => {
       { error: "The user's computer is not connected. Ask them to open the Rakazo desktop app." },
     ]);
     expect(requests).toEqual([]);
+    vi.unstubAllEnvs();
   });
 });
 

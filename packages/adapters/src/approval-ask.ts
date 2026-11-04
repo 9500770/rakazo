@@ -13,7 +13,11 @@ import {
 } from "@rakazo/core";
 import { urlSite } from "@rakazo/core/egress";
 import { userComputerApprovalMode } from "./user-computer-approval.js";
-import { USER_COMPUTER_SCREEN_TOOLS, userComputerAppName } from "./user-computer-tools.js";
+import {
+  USER_COMPUTER_SCREEN_TOOLS,
+  USER_COMPUTER_SHELL_TOOL,
+  userComputerAppName,
+} from "./user-computer-tools.js";
 
 export const MAX_APPROVAL_SUMMARY_LENGTH = 500;
 export const MAX_APPROVAL_DETAIL_LENGTH = 4_000;
@@ -21,12 +25,13 @@ export const MAX_APPROVAL_DETAIL_LENGTH = 4_000;
 export const MAX_FETCH_URL_LENGTH = 2_048;
 
 /**
- * The buttons on a user's-computer approval. Under `always` the space grant is never consulted,
- * so the card offers a single run instead of a button that would quietly do nothing.
+ * The buttons on a user's-computer approval. Only screen control reads a space grant back, so a
+ * shell card and every card under `always` offer a single run instead of a button that would
+ * quietly do nothing.
  */
-function userComputerAskActions() {
+function userComputerAskActions(toolName: string) {
   const deny = { id: "deny", label: "Deny" };
-  return userComputerApprovalMode() === "always"
+  return toolName === USER_COMPUTER_SHELL_TOOL || userComputerApprovalMode() === "always"
     ? [{ id: "allow", label: "Allow once" }, deny]
     : [{ id: "allow", label: "Allow in this space" }, deny];
 }
@@ -142,7 +147,7 @@ export function buildApprovalAskBlock(
           }
         : {}),
       status: "pending",
-      actions: userComputerAskActions(),
+      actions: userComputerAskActions(toolName),
     };
   }
   if (toolName === "user_computer_policy") {
@@ -184,7 +189,7 @@ export function buildApprovalAskBlock(
       ),
       detailFormat: "code",
       status: "pending",
-      actions: userComputerAskActions(),
+      actions: userComputerAskActions(toolName),
     };
   }
   const fetchSite = webFetchSite(toolName, args);
