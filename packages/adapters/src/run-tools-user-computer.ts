@@ -1,6 +1,7 @@
 import path from "node:path";
 import type { AgentToolExecutionResult, ProcessEvent } from "@rakazo/adapter-kit";
-import { redactSecrets, sandboxCommandTimeoutMs } from "@rakazo/core";
+import type { ActionApprovalResolved, ApprovalMode } from "@rakazo/core";
+import { planActionGate, redactSecrets, sandboxCommandTimeoutMs } from "@rakazo/core";
 import { z } from "zod";
 import type { HostComputerEnvironment } from "./host-computer-protocol.js";
 import type {
@@ -71,75 +72,73 @@ export function userComputerOwner(input: {
   return input.runUserId === input.botUserId ? input.runUserId : undefined;
 }
 
+export type UserComputerGateInput = {
+  blocked: boolean;
+  name: string;
+  args: Record<string, unknown>;
+  resolved: ActionApprovalResolved;
+  /** Space approval mode; caller remaps space `never` to `auto` (real desktops stay reviewed). */
+  mode: ApprovalMode;
+  checkerConfigured: boolean;
+};
+
 /**
- * The user's own computer asks a person first, in every approval mode and whatever the rules
- * allow, until they choose "Allow in this space"; a block still refuses it. A deployment can
- * change that with RAKAZO_USER_COMPUTER_APPROVAL (see user-computer-approval.ts): `always` asks
- * even after that, `never` runs without asking. The space's mode never loosens it. These tools run
- * only in the user's own runs (see userComputerOwner), so any effect of them past "intended" in
- * this space traces back to that approval. Removing every paired computer ends it, so pairing again
- * asks again. Screen control is approved per app. A shell command is not remembered that way: it
- * asks on every call unless a per-computer grant or the deployment mode allows it, because an
- * approval that carried over to every computer was access nobody could see or take back.
+ * Whether a user-computer tool runs, asks, is judged, or is refused. Precedence:
+ * 1. a space rule that blocks the tool
+ * 2. `/pc` row for this computer, then `*`
+ * 3. `RAKAZO_USER_COMPUTER_APPROVAL` never/always
+ * 4. the space's planActionGate path (auto → judge when a checker is up; ask → card)
+ *
+ * Space `never` must already be remapped to `auto` by the caller: silent shell on a real desktop
+ * is not an unattended-sandbox setting. Screen tools still honor a prior app approval when the
+ * plan would ask. Shell is always consequential, so Auto always goes through the judge.
  */
 export async function userComputerGate(
   ctx: RunContext,
-  blocked: boolean,
-  name: string,
-  args: Record<string, unknown>,
-): Promise<"deny" | "allow" | "ask"> {
+  input: UserComputerGateInput,
+): Promise<"deny" | "allow" | "ask" | "judge"> {
+  const { blocked, name, args, resolved, mode, checkerConfigured } = input;
   if (blocked) return "deny";
   // An explicit row for this bot and computer beats everything else: it is what /PC wrote, and
-  // the only place a person widens one combination without widening the rest.
+  // the only place a person widens or refuses one combination without changing the rest.
   const policy = await userComputerPolicyFor(ctx, args);
-  if (policy) return policy;
+  if (policy === "allow") return "allow";
+  if (policy === "ask") return "ask";
   // The owner's own computers follow their own mode (see user-computer-approval.ts): a sandbox may
   // run unattended, a real desktop may be told to ask every time.
-  const mode = userComputerApprovalMode();
-  if (mode === "never") return "allow";
-  if (mode === "always") return "ask";
-  // A shell command follows the configuration alone: an explicit row for this bot and computer
-  // (checked above) or a deployment told never to ask runs it without a card. An earlier approval
-  // is not a standing grant, so one "Allow" on one machine cannot open every other computer.
-  if (!USER_COMPUTER_SCREEN_TOOLS.has(name)) return "ask";
-  const { deps, run } = ctx;
-  const pairedSince = await deps.userDevices?.pairedSince(run.userId);
-  if (!pairedSince) return "ask";
-  // An expiring grant: only approvals recorded inside the window count, so access given for one
-  // task ends on its own instead of lasting as long as the pairing.
-  const ttl = userComputerGrantTtlMs();
-  const since =
-    ttl === undefined ? pairedSince : new Date(Math.max(pairedSince.getTime(), Date.now() - ttl));
-  const where = {
-    spaceId: run.spaceId,
-    status: { in: ["approved", "executing", "completed", "uncertain"] },
-    createdAt: { gte: since },
-    // One bot's "Allow in this space" is not another bot's.
-    run: { userId: run.userId, ...(ctx.bot?.id ? { botId: ctx.bot.id } : {}) },
+  const deployment = userComputerApprovalMode();
+  if (deployment === "never") return "allow";
+  if (deployment === "always") return "ask";
+  // Same plan as every other consequential tool: Auto judges, Ask shows a card. Shell is always
+  // consequential (a write is possible), so Auto never skips the judge on a "read-only" name.
+  const plan = planActionGate({
+    resolved,
+    mode,
+    consequential: true,
+    checkerConfigured,
+  });
+  if (plan !== "ask" || !USER_COMPUTER_SCREEN_TOOLS.has(name)) return plan;
+  if (await screenAppPreviouslyApproved(ctx, args)) return "allow";
+  return "ask";
+}
+
+/** Alias and deviceKey of the computer a call targets, for the approval model's tool_args. */
+export async function userComputerReviewTarget(
+  ctx: RunContext,
+  args: Record<string, unknown>,
+): Promise<{ computer: string; deviceKey: string } | undefined> {
+  const owner = ctx.source?.userComputerOwner;
+  const devices = ctx.deps.userDevices;
+  if (!owner || !devices) return undefined;
+  const picker = userDevicePicker(devices);
+  const device = picker
+    ? await picker.connectedDevice(owner, computerArg(args.computer)).catch(() => null)
+    : await devices.connected(owner).catch(() => null);
+  if (!device) return undefined;
+  return {
+    computer: computerAlias(device.name, device.deviceId),
+    deviceKey: device.deviceId,
   };
-  const app = userComputerAppName(args.app).toLowerCase();
-  if (!app) return "ask";
-  // Every screen action records an effect, so page through them rather than cap the search.
-  let cursor: string | undefined;
-  for (;;) {
-    const page = await deps.prisma.externalEffect.findMany({
-      where: { ...where, kind: { in: [...USER_COMPUTER_SCREEN_TOOLS] } },
-      select: { id: true, request: true },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: SCREEN_APPROVAL_PAGE,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
-    if (
-      page.some(
-        (effect) =>
-          userComputerAppName((effect.request as { app?: unknown } | null)?.app).toLowerCase() ===
-          app,
-      )
-    )
-      return "allow";
-    if (page.length < SCREEN_APPROVAL_PAGE) return "ask";
-    cursor = page.at(-1)!.id;
-  }
 }
 
 /**
@@ -170,6 +169,51 @@ async function userComputerPolicyFor(
     })
     .catch(() => []);
   return activeUserComputerPolicy(rows, device?.deviceId);
+}
+
+/** True when this space already approved the same app for this bot inside the grant window. */
+async function screenAppPreviouslyApproved(
+  ctx: RunContext,
+  args: Record<string, unknown>,
+): Promise<boolean> {
+  const { deps, run } = ctx;
+  const pairedSince = await deps.userDevices?.pairedSince(run.userId);
+  if (!pairedSince) return false;
+  // An expiring grant: only approvals recorded inside the window count, so access given for one
+  // task ends on its own instead of lasting as long as the pairing.
+  const ttl = userComputerGrantTtlMs();
+  const since =
+    ttl === undefined ? pairedSince : new Date(Math.max(pairedSince.getTime(), Date.now() - ttl));
+  const where = {
+    spaceId: run.spaceId,
+    status: { in: ["approved", "executing", "completed", "uncertain"] },
+    createdAt: { gte: since },
+    // One bot's "Allow in this space" is not another bot's.
+    run: { userId: run.userId, ...(ctx.bot?.id ? { botId: ctx.bot.id } : {}) },
+  };
+  const app = userComputerAppName(args.app).toLowerCase();
+  if (!app) return false;
+  // Every screen action records an effect, so page through them rather than cap the search.
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await deps.prisma.externalEffect.findMany({
+      where: { ...where, kind: { in: [...USER_COMPUTER_SCREEN_TOOLS] } },
+      select: { id: true, request: true },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: SCREEN_APPROVAL_PAGE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    });
+    if (
+      page.some(
+        (effect) =>
+          userComputerAppName((effect.request as { app?: unknown } | null)?.app).toLowerCase() ===
+          app,
+      )
+    )
+      return true;
+    if (page.length < SCREEN_APPROVAL_PAGE) return false;
+    cursor = page.at(-1)!.id;
+  }
 }
 
 const SCREEN_APPROVAL_PAGE = 200;

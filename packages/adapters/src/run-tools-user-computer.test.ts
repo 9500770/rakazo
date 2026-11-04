@@ -1,3 +1,4 @@
+import type { ActionApprovalResolved } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostComputerRequest } from "./host-computer-protocol.js";
 import type { RunContext } from "./run-context.js";
@@ -8,10 +9,36 @@ import {
   userComputerObserve,
   userComputerOwner,
   userComputerShell,
+  type UserComputerGateInput,
 } from "./run-tools-user-computer.js";
 import { userComputerApprovalMode, userComputerGrantTtlMs } from "./user-computer-approval.js";
 import { computerAlias, resolveUserDevice } from "./user-device-alias.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
+
+const unruled: ActionApprovalResolved = {
+  decision: "allow",
+  source: "default",
+  matchingRules: [],
+  decisiveRules: [],
+};
+
+function gate(
+  ctx: RunContext,
+  blocked: boolean,
+  name: string,
+  args: Record<string, unknown>,
+  overrides: Partial<UserComputerGateInput> = {},
+) {
+  return userComputerGate(ctx, {
+    blocked,
+    name,
+    args,
+    resolved: unruled,
+    mode: "ask",
+    checkerConfigured: false,
+    ...overrides,
+  });
+}
 
 const environment = { platform: "darwin", home: "/Users/fake", shell: "/bin/zsh" };
 
@@ -125,13 +152,11 @@ describe("userComputerGate", () => {
       },
       run: { spaceId: "space-1", userId: "user-1" },
     } as unknown as RunContext;
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "mail" }),
-    ).resolves.toBe("allow");
+    await expect(gate(ctx, false, "user_computer_observe", { app: "mail" })).resolves.toBe(
+      "allow",
+    );
     expect(findMany).toHaveBeenCalledTimes(3);
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "Notes" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Notes" })).resolves.toBe("ask");
   });
 });
 
@@ -178,24 +203,18 @@ describe("userComputerGate approval mode", () => {
   it("asks every time in always mode, even after this space allowed it", async () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "always");
     const { ctx, lookup } = gatedContext();
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("ask");
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Mail" })).resolves.toBe("ask");
     expect(lookup).not.toHaveBeenCalled();
   });
 
   it("runs in never mode, and still refuses a block", async () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "never");
     const { ctx } = gatedContext();
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("allow");
-    await expect(
-      userComputerGate(ctx, true, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("deny");
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe(
+      "allow",
+    );
+    await expect(gate(ctx, true, "user_computer_shell", { command: "ls" })).resolves.toBe("deny");
   });
 
   it("counts only app approvals inside the grant window when one is set", async () => {
@@ -208,9 +227,7 @@ describe("userComputerGate approval mode", () => {
       },
       run: { spaceId: "space-1", userId: "user-1" },
     } as unknown as RunContext;
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Mail" })).resolves.toBe("ask");
     const where = (
       findMany.mock.calls[0]?.[0] as { where: { createdAt: { gte: Date } } } | undefined
     )?.where;
@@ -220,7 +237,7 @@ describe("userComputerGate approval mode", () => {
     expect(age).toBeLessThan(31 * 60_000);
   });
 
-  it("asks for a command even after this space approved one, and never reads them back", async () => {
+  it("asks for a command in ask mode, and never reads shell approvals back", async () => {
     vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "");
     const findFirst = vi.fn(async (_args: unknown) => ({ id: "earlier" }));
     const ctx = {
@@ -231,9 +248,7 @@ describe("userComputerGate approval mode", () => {
       run: { spaceId: "space-1", userId: "user-1" },
       bot: { id: "bot-1" },
     } as unknown as RunContext;
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("ask");
     expect(findFirst).not.toHaveBeenCalled();
   });
 
@@ -247,13 +262,30 @@ describe("userComputerGate approval mode", () => {
       },
       run: { spaceId: "space-1", userId: "user-1" },
     } as unknown as RunContext;
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "Mail" }),
-    ).resolves.toBe("allow");
-    await expect(
-      userComputerGate(ctx, false, "user_computer_observe", { app: "Notes" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Mail" })).resolves.toBe(
+      "allow",
+    );
+    await expect(gate(ctx, false, "user_computer_observe", { app: "Notes" })).resolves.toBe("ask");
   });
+
+  it("judges shell in auto when a checker is configured, and asks without one", async () => {
+    vi.stubEnv("RAKAZO_USER_COMPUTER_APPROVAL", "");
+    const { ctx, lookup } = gatedContext();
+    await expect(
+      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
+        mode: "auto",
+        checkerConfigured: true,
+      }),
+    ).resolves.toBe("judge");
+    await expect(
+      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
+        mode: "auto",
+        checkerConfigured: false,
+      }),
+    ).resolves.toBe("ask");
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
 });
 
 describe("userComputerOwner", () => {
@@ -501,22 +533,25 @@ describe("userComputerGate policy rows", () => {
     return { ctx, findMany, findFirst };
   }
 
-  it("runs where this bot's row allows that computer", async () => {
+  it("runs where this bot's row allows that computer, skipping the judge", async () => {
     const { ctx, findMany } = policyContext([
       { deviceKey: "device-1", mode: "allow", expiresAt: null },
     ]);
     await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
+      gate(ctx, false, "user_computer_shell", { command: "ls" }, {
+        mode: "auto",
+        checkerConfigured: true,
+      }),
     ).resolves.toBe("allow");
     expect(
       (findMany.mock.calls[0]?.[0] as { where: { botId: string } } | undefined)?.where.botId,
     ).toBe("bot-1");
   });
 
-  it("keeps another computer asking when only one row allows", async () => {
+  it("keeps another computer on the space path when only one row allows", async () => {
     const { ctx } = policyContext([{ deviceKey: "device-1", mode: "allow", expiresAt: null }]);
     await expect(
-      userComputerGate(ctx, false, "user_computer_shell", {
+      gate(ctx, false, "user_computer_shell", {
         command: "ls",
         computer: choices[1]!.alias,
       }),
@@ -529,11 +564,11 @@ describe("userComputerGate policy rows", () => {
       { deviceKey: "device-2", mode: "ask", expiresAt: null },
     ];
     const { ctx } = policyContext(rows);
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe(
+      "allow",
+    );
     await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("allow");
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", {
+      gate(ctx, false, "user_computer_shell", {
         command: "ls",
         computer: choices[1]!.alias,
       }),
@@ -544,16 +579,12 @@ describe("userComputerGate policy rows", () => {
     const { ctx } = policyContext([
       { deviceKey: "device-1", mode: "allow", expiresAt: new Date(Date.now() - 60_000) },
     ]);
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("ask");
   });
 
   it("asks for a command when no row allows that computer, whatever the space approved before", async () => {
     const { ctx, findFirst } = policyContext([], false);
-    await expect(
-      userComputerGate(ctx, false, "user_computer_shell", { command: "ls" }),
-    ).resolves.toBe("ask");
+    await expect(gate(ctx, false, "user_computer_shell", { command: "ls" })).resolves.toBe("ask");
     expect(findFirst).not.toHaveBeenCalled();
   });
 });

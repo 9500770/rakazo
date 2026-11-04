@@ -1,16 +1,16 @@
 /**
- * How much a bot may do on the owner's own computer, kept apart from the space's approval mode.
- * "Never ask" suits a VM the run owns; the person's real desktop may still be told to ask. The mode
- * is read per call, so a deployment sets it once with an environment variable and nothing is
- * migrated, stored, or pushed to the desktop app.
+ * Deployment fallback for the owner's own computer, after `/pc` rows and before the space's
+ * planActionGate path. "Never ask" suits a VM the run owns; the person's real desktop may still
+ * be told to ask every time. The mode is read per call, so a deployment sets it once with an
+ * environment variable and nothing is migrated, stored, or pushed to the desktop app.
  *
  * RAKAZO_USER_COMPUTER_GRANT_TTL (minutes) makes "Allow in this space" expire, so access granted
  * for one task is taken back on its own instead of lasting as long as the pairing.
  *
  * RAKAZO_USER_COMPUTER_APPROVAL:
- * - `ask` (default) asks the first time per app in a space and then honors "Allow in this space".
- *   A shell command is never remembered that way: it asks on every call unless a per-computer
- *   grant (user_computer_policy) allows that computer.
+ * - `ask` (default) falls through to the space's Auto/Ask path (judge when a checker is up).
+ *   Screen tools still honor a prior app approval when that path would ask. Shell is judged or
+ *   asked each call unless a per-computer grant allows that computer.
  * - `always` asks every time, even when this space allowed it before.
  * - `never` runs without asking; a block rule still refuses, and the desktop's own permission still applies.
  */

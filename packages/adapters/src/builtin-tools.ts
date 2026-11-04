@@ -560,7 +560,7 @@ export const builtinAgentTools: ConnectorTool[] = [
   {
     name: "user_computer_policy",
     description:
-      "See or set whether this bot may use the user's computers without asking. One policy per bot and computer; without one the bot asks. Grants can expire.",
+      "See or set whether this bot may use the user's computers without asking. One policy per bot and computer; without one the space's approval mode decides. Grants can expire.",
     inputSchema: {
       type: "object",
       properties: {

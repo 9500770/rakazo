@@ -48,8 +48,9 @@ function computerLabel(choice: UserDeviceChoice | undefined, ref: string | undef
 
 /**
  * See or change whether one bot may use the user's computers without asking. A row is keyed by
- * bot and computer, so `/pc allow office-pc 90m` leaves this bot's other computers asking; without
- * any row the bot asks. Grants may expire on their own (see user-computer-policy.ts).
+ * bot and computer, so `/pc allow office-pc 90m` leaves this bot's other computers on the space's
+ * path; without any row the space decides. Grants may expire on
+ * their own (see user-computer-policy.ts).
  */
 export async function userComputerPolicy(ctx: RunContext, call: ToolCall) {
   const { deps, run, source } = ctx;

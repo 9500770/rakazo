@@ -3265,13 +3265,11 @@ describe("user_computer_shell", () => {
     expect(requests).toEqual([]);
   });
 
-  it("asks first, even in never-ask mode with an allow rule, and asks again for the next command", async () => {
+  it("asks first in ask mode, and asks again for the next command", async () => {
     const { gateway, requests } = devices();
     const f = fixture({
       ...ownRun,
       userDevices: gateway,
-      skipApprovals: true,
-      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "user_computer_shell" }],
     });
     f.setCalls([call("ssh pi.local hostname")]);
     await f.run();
@@ -3319,6 +3317,72 @@ describe("user_computer_shell", () => {
     expect(f.pauseRunForInput).toHaveBeenCalledTimes(2);
     expect(isApprovalPausedResult(f.results.at(-1))).toBe(true);
     expect(f.prisma.externalEffect.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("runs under never-ask when an always-allow rule matches (space never maps to auto)", async () => {
+    const { gateway, requests } = devices();
+    const f = fixture({
+      ...ownRun,
+      userDevices: gateway,
+      skipApprovals: true,
+      rules: [{ effect: "always_allow", matchKind: "tool", matchValue: "user_computer_shell" }],
+    });
+    f.setCalls([call("ssh pi.local hostname")]);
+    await f.run();
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
+    expect(f.results.at(-1)).toEqual({
+      stdout: "pi.local\n",
+      stderr: "",
+      code: 0,
+      computer: "laptop-ce-1",
+    });
+    expect(requests.map(({ request }) => request.method)).toEqual([
+      "provision",
+      "environment",
+      "execute",
+    ]);
+  });
+
+  it("lets Auto Review pass, ask, or fail closed on a shell command", async () => {
+    for (const [decision, expectsAsk] of [
+      ["pass", false],
+      ["ask", true],
+      ["error", true],
+    ] as const) {
+      reviewMock.mockReset();
+      reviewMock.mockResolvedValue({
+        decision,
+        reason: `review-${decision}`,
+        model: "mock/model",
+      });
+      const { gateway, requests } = devices();
+      const f = fixture({
+        ...ownRun,
+        userDevices: gateway,
+        autoReview: true,
+        prompt: "List files on my laptop",
+      });
+      f.setCalls([call("ls ~/Documents")]);
+      await f.run();
+      expect(reviewMock).toHaveBeenCalledOnce();
+      const reviewed = reviewMock.mock.calls[0]![0] as {
+        userTask: string;
+        args: Record<string, unknown>;
+      };
+      expect(reviewed.userTask).toContain("List files on my laptop");
+      expect(reviewed.args).toMatchObject({
+        command: "ls ~/Documents",
+        computer: "laptop-ce-1",
+        deviceKey: "device-1",
+      });
+      if (expectsAsk) {
+        expect(isApprovalPausedResult(f.results[0])).toBe(true);
+        expect(requests).toEqual([]);
+      } else {
+        expect(f.pauseRunForInput).not.toHaveBeenCalled();
+        expect(f.results.at(-1)).toMatchObject({ code: 0, computer: "laptop-ce-1" });
+      }
+    }
   });
 
   it("asks again after the computer is removed and paired again", async () => {
@@ -3440,7 +3504,6 @@ describe("user computer screen control", () => {
     const f = fixture({
       ...ownRun,
       userDevices: gateway,
-      skipApprovals: true,
       secrets: ["sk-fake-secret"],
     });
     f.setCalls([observe("TextEdit")]);
@@ -3562,6 +3625,7 @@ describe("a click that completes a purchase on a website", () => {
         confirmationsOverride: true,
       },
     ] as const) {
+      reviewMock.mockReset();
       const page = pageBrowser();
       const f = fixture({ builtin: true, browser: page.provider, ...options } as never);
       f.setCalls([payCall()]);
