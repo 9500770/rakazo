@@ -1,4 +1,4 @@
-import { Trans, useLingui } from "@lingui/react/macro";
+import { Plural, Trans, useLingui } from "@lingui/react/macro";
 import type { AccountSecurity, BotAvatarSet, UsageSummary } from "@rakazo/contracts";
 import {
   accountDisplay,
@@ -537,18 +537,26 @@ export function UsageSettingsPanel({
     style: "currency",
     currency: "USD",
   });
-  const number = (value: number | null | undefined) => (value == null ? "—" : count.format(value));
-  const cost = (value: number | null | undefined) =>
-    value == null ? "—" : value > 0 && value < 0.01 ? `<${usd.format(0.01)}` : usd.format(value);
+  // `uncounted` marks a total that covers every call except the ones that reported nothing,
+  // so a partial figure reads as approximate rather than disappearing.
+  const approx = (value: string, uncounted: number | undefined) =>
+    (uncounted ?? 0) > 0 ? `≈ ${value}` : value;
+  const number = (value: number | null | undefined, uncounted?: number) =>
+    value == null ? "—" : approx(count.format(value), uncounted);
+  const cost = (value: number | null | undefined, uncounted?: number) =>
+    value == null
+      ? "—"
+      : approx(value > 0 && value < 0.01 ? `<${usd.format(0.01)}` : usd.format(value), uncounted);
   const models = usage?.models ?? [];
+  const missingCalls = Math.max(usage?.uncountedTokenCalls ?? 0, usage?.uncountedCostCalls ?? 0);
   return (
     <div ref={panelRef} tabIndex={-1} data-testid="usage-settings" className="outline-none">
       {usage ? (
         <dl className="grid grid-cols-3 gap-3">
           {[
             { label: t`Runs`, value: number(usage.runs) },
-            { label: t`Tokens`, value: number(usage.totalTokens) },
-            { label: t`Cost`, value: cost(usage.costUsd) },
+            { label: t`Tokens`, value: number(usage.totalTokens, usage.uncountedTokenCalls) },
+            { label: t`Cost`, value: cost(usage.costUsd, usage.uncountedCostCalls) },
           ].map((stat) => (
             <div key={stat.label} className="rounded-xl border border-border px-4 py-3">
               <dt className="text-[12.5px] text-muted-foreground">{stat.label}</dt>
@@ -592,17 +600,31 @@ export function UsageSettingsPanel({
                     {number(row.modelCalls)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {number(row.inputTokens)}
+                    {number(row.inputTokens, row.uncountedTokenCalls)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {number(row.outputTokens)}
+                    {number(row.outputTokens, row.uncountedTokenCalls)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{cost(row.costUsd)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {cost(row.costUsd, row.uncountedCostCalls)}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </div>
+      ) : null}
+      {missingCalls > 0 ? (
+        <p
+          data-testid="usage-missing-calls"
+          className="mt-2 px-1 text-[12px] leading-5 text-muted-foreground"
+        >
+          <Plural
+            value={missingCalls}
+            one="# call ended before the provider reported usage; totals are approximate."
+            other="# calls ended before the provider reported usage; totals are approximate."
+          />
+        </p>
       ) : null}
     </div>
   );

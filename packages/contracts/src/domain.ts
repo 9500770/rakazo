@@ -1260,13 +1260,20 @@ export const UsageRecordSchema = z.object({
   createdAt: z.string(),
 });
 
-/** Token and cost totals are null when any counted call lacks that figure. */
+/**
+ * Totals cover the calls that reported a figure. `uncounted*Calls` counts the calls in the same
+ * group that reported nothing for it, so a client can mark the total approximate instead of
+ * hiding every number as soon as one aborted call lacks usage. A figure is null only when no
+ * call in the group reported it.
+ */
 const UsageTotalsSchema = z.object({
   inputTokens: z.number().nullable(),
   outputTokens: z.number().nullable(),
   totalTokens: z.number().nullable().optional(),
   costUsd: z.number().nullable().optional(),
   modelCalls: z.number().optional(),
+  uncountedTokenCalls: z.number().int().nonnegative().optional(),
+  uncountedCostCalls: z.number().int().nonnegative().optional(),
 });
 export const UsageSummarySchema = UsageTotalsSchema.extend({
   runs: z.number(),
