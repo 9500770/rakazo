@@ -27,7 +27,6 @@ import {
   dockerComputerToolInstruction,
   persistentComputerInstruction,
   threadContextForRun,
-  turnPlanInstruction,
   userTurnInstructions,
   VOICE_CALL_INSTRUCTION,
   voiceCallInstruction,
@@ -1485,7 +1484,6 @@ describe("userTurnInstructions", () => {
     expect(instructions).toEqual([
       "Bot instructions",
       computerLine,
-      turnPlanInstruction(),
       "This entire computer workspace is your private home.",
       "Agent environment",
       ...stableMiddle,
@@ -1522,7 +1520,6 @@ describe("userTurnInstructions", () => {
     expect(instructions).toEqual([
       "Bot instructions",
       computerLine,
-      turnPlanInstruction(),
       "This entire computer workspace is your private home.",
       ...stableMiddle,
       archiveBot,
@@ -1551,7 +1548,6 @@ describe("userTurnInstructions", () => {
     expect(instructions).toEqual([
       "Bot instructions",
       computerLine,
-      turnPlanInstruction(),
       "Catalog guidance",
       "This entire computer workspace is your private home.",
       ...stableMiddle,
@@ -1741,7 +1737,6 @@ describe("userTurnInstructions", () => {
     expect(text).toContain("destination_write");
     expect(text).toContain("Always put the complete final answer in your normal reply.");
     expect(text).toContain("ask_user");
-    expect(text).toContain("break it into visible steps first (a short plan)");
   });
 
   it("keeps the reaction silence rule when message_user is off", () => {

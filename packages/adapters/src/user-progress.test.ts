@@ -69,9 +69,7 @@ describe("messageUserMaxLength", () => {
     expect(messageUserTool().description).toContain("cut off silently at 500 characters");
     expect(longWorkProgressGuidance()).toContain("message_user is capped at 500 characters");
     expect(longWorkProgressGuidance().startsWith(ANSWER_BEFORE_ASK)).toBe(true);
-    expect(longWorkProgressGuidance()).toContain(
-      "Before the first tool call on such a task, tell the person right away with message_user",
-    );
+    expect(longWorkProgressGuidance()).toContain("with message_user before the first tool call");
     expect(longWorkProgressGuidance()).toContain(
       "Do not go silent through a long stretch of tool calls",
     );
