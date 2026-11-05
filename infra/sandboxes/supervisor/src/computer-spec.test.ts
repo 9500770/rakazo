@@ -32,6 +32,8 @@ import {
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   computerNetworkOwnerFor,
+  computerProxyEnv,
+  computerProxyEnvMatches,
   containerCreateOptions,
   containerNameFor,
   controlPortPublicationMatches,
@@ -39,6 +41,7 @@ import {
   hostComputerUser,
   isRegistryQualifiedImage,
   legacyNetworkOwnedSolelyBy,
+  PROXY_POLICY_TARGET,
   parseMemoryBytes,
   publishedLoopbackControlHostPort,
   resolveComputerControlEndpoint,
@@ -46,6 +49,7 @@ import {
   resolveComputerEgressMode,
   resolveComputerImage,
   resolveComputerMounts,
+  resolveComputerProxy,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
   resolveSpaceComputerLimit,
@@ -205,6 +209,92 @@ describe("graphical computer spec", () => {
     expect(containerCreateOptions({ ...base, dns: ["1.1.1.1"] }).HostConfig).toMatchObject({
       Dns: ["1.1.1.1"],
     });
+  });
+
+  it("parses the computer proxy, staying direct when unset", () => {
+    expect(resolveComputerProxy(undefined)).toBeUndefined();
+    expect(resolveComputerProxy(" ")).toBeUndefined();
+    expect(resolveComputerProxy(" http://host.docker.internal:8118 ")).toBe(
+      "http://host.docker.internal:8118",
+    );
+    expect(resolveComputerProxy("socks5://proxy.lan:1080")).toBe("socks5://proxy.lan:1080");
+    for (const value of ["host:8118", "ftp://proxy", "http://proxy extra"])
+      expect(() => resolveComputerProxy(value)).toThrow(/SANDBOX_COMPUTER_PROXY/);
+  });
+
+  it("gives computers proxy env and a read-only Chromium policy mount when one is set", () => {
+    const base = {
+      name: "rakazo-bot-x",
+      image: "img",
+      botId: "x",
+      spaceId: "s",
+      homePath: "/data/x",
+    };
+    expect(containerCreateOptions(base).Env?.join("\n")).not.toMatch(/PROXY/);
+    expect(containerCreateOptions(base).HostConfig.Mounts).toBeUndefined();
+    const proxyEnv = computerProxyEnv("http://proxy.lan:8118", "localhost,127.0.0.1");
+    const withProxy = containerCreateOptions({
+      ...base,
+      proxyEnv,
+      proxyPolicy: { path: "/data/computer-proxy/rakazo-proxy.json" },
+    });
+    expect(withProxy.Env).toContain("HTTP_PROXY=http://proxy.lan:8118");
+    expect(withProxy.Env).toContain("http_proxy=http://proxy.lan:8118");
+    expect(withProxy.Env).toContain("NO_PROXY=localhost,127.0.0.1");
+    expect(withProxy.HostConfig.Binds).toEqual(["/data/x:/home/rakazo"]);
+    expect(withProxy.HostConfig.Mounts).toEqual([
+      {
+        Type: "bind",
+        Source: "/data/computer-proxy/rakazo-proxy.json",
+        Target: PROXY_POLICY_TARGET,
+        ReadOnly: true,
+      },
+    ]);
+    const onVolume = containerCreateOptions({
+      ...base,
+      homeVolume: { name: "appdata", subpath: "homes/x" },
+      proxyEnv,
+      proxyPolicy: {
+        path: "/data/computer-proxy/rakazo-proxy.json",
+        volume: { name: "appdata", subpath: "computer-proxy/rakazo-proxy.json" },
+      },
+    });
+    expect(onVolume.HostConfig.Mounts?.[1]).toMatchObject({
+      Type: "volume",
+      Source: "appdata",
+      Target: PROXY_POLICY_TARGET,
+      ReadOnly: true,
+    });
+  });
+
+  it("matches a computer's proxy env to the configured one", () => {
+    const desired = computerProxyEnv("http://proxy.lan:8118", "localhost");
+    expect(computerProxyEnvMatches(desired, desired)).toBe(true);
+    expect(computerProxyEnvMatches([...desired, "PATH=/bin"], desired)).toBe(true);
+    expect(computerProxyEnvMatches(["PATH=/bin"], desired)).toBe(false);
+    expect(computerProxyEnvMatches([...desired, "HTTP_PROXY=http://other:1"], desired)).toBe(false);
+    expect(computerProxyEnvMatches(undefined, [])).toBe(true);
+    expect(computerProxyEnvMatches(["HTTP_PROXY=http://proxy.lan:8118"], [])).toBe(false);
+  });
+
+  it("ignores the proxy policy mount when matching operator host mounts", () => {
+    const desired = resolveComputerMounts("/srv/docs:/mnt/docs");
+    const created = containerCreateOptions({
+      name: "rakazo-bot-x",
+      image: "img",
+      botId: "x",
+      spaceId: "s",
+      homePath: "/data/x",
+      mounts: desired,
+      proxyEnv: computerProxyEnv("http://proxy.lan:8118"),
+      proxyPolicy: { path: "/data/computer-proxy/rakazo-proxy.json" },
+    });
+    expect(
+      computerMountsMatch(
+        { HostConfig: created.HostConfig, Config: { Labels: created.Labels } } as never,
+        desired,
+      ),
+    ).toBe(true);
   });
 
   it("parses computer host mounts, with none when unset", () => {

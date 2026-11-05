@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import http from "node:http";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -38,6 +38,9 @@ import {
   computerNetworkNameFor,
   computerNetworkNamesForCleanup,
   computerNetworkOwnerFor,
+  computerProxyEnv,
+  computerProxyEnvMatches,
+  computerProxyPolicyJson,
   computerResourceLimits,
   containerCreateOptions,
   containerNameFor,
@@ -45,11 +48,14 @@ import {
   homeVolumeMatches,
   hostComputerUser,
   legacyNetworkOwnedSolelyBy,
+  PROXY_POLICY_TARGET,
   publishedLoopbackControlHostPort,
   resolveComputerControlEndpoint,
   resolveComputerDns,
   resolveComputerEgressMode,
   resolveComputerMounts,
+  resolveComputerNoProxy,
+  resolveComputerProxy,
   resolveScreenNetworkMode,
   resolveScreenPublishTarget,
   resolveSpaceComputerLimit,
@@ -128,6 +134,27 @@ let computerEgressMode: ComputerEgressMode =
   computerEgressSetting === "restricted" ? "restricted" : "open";
 const computerDns = resolveComputerDns();
 const computerMounts = resolveComputerMounts(undefined, [dataDir, dockerSocketPath]);
+const computerProxy = resolveComputerProxy();
+const computerNoProxy = resolveComputerNoProxy();
+const computerProxyEnvironment = computerProxyEnv(computerProxy, computerNoProxy);
+
+/**
+ * The Chromium policy file mounted into every computer. Written inside the supervisor's data
+ * dir so it persists like the bot homes and rides the same named volume when there is one.
+ */
+async function ensureComputerProxyPolicy() {
+  if (!computerProxy) return;
+  const dir = path.join(dataDir, "computer-proxy");
+  const file = path.join(dir, path.basename(PROXY_POLICY_TARGET));
+  const json = computerProxyPolicyJson(computerProxy, computerNoProxy);
+  await mkdir(dir, { recursive: true });
+  try {
+    if ((await readFile(file, "utf8")) === json) return;
+  } catch {
+    // Missing file: write it below.
+  }
+  await writeFile(file, json, { mode: 0o644 });
+}
 // Docker follows symlinks in a bind source, so also check where a locally visible source points.
 assertComputerMountSources(
   computerMounts.map((mount) => ({
@@ -298,6 +325,8 @@ app.post("/computers", async (c) => {
           info.Config.User === computerUser &&
           // DNS is fixed when a container is created, so a changed setting replaces it.
           computerDnsMatches(info.HostConfig.Dns, computerDns) &&
+          // So is proxy env: an added, changed or removed proxy replaces the computer.
+          computerProxyEnvMatches(info.Config.Env, computerProxyEnvironment) &&
           // So are host mounts: an added, changed or removed one replaces the computer.
           computerMountsMatch(info, computerMounts) &&
           controlPublishOk &&
@@ -351,6 +380,17 @@ app.post("/computers", async (c) => {
           screenNetworkMode === "internal"
             ? undefined
             : await ensureBotNetwork(body.botId, networkOwner);
+        await ensureComputerProxyPolicy();
+        const proxyPolicyStorage = computerProxy
+          ? computerHomeStorage(
+              path.join(dataDir, "computer-proxy", path.basename(PROXY_POLICY_TARGET)),
+              dataDir,
+              runtimeInfo,
+            )
+          : undefined;
+        const proxyPolicy = proxyPolicyStorage
+          ? { path: proxyPolicyStorage.homePath, volume: proxyPolicyStorage.homeVolume }
+          : undefined;
         const options = containerCreateOptions({
           name,
           image: COMPUTER_IMAGE,
@@ -363,6 +403,8 @@ app.post("/computers", async (c) => {
           publishControlPort: controlViaLoopback,
           dns: computerDns,
           mounts: computerMounts,
+          proxyEnv: computerProxyEnvironment,
+          ...(proxyPolicy ? { proxyPolicy } : {}),
         });
         let container: Docker.Container | undefined;
         const removeNamedComputer = () =>

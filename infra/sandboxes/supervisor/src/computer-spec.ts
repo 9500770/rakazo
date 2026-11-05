@@ -247,6 +247,84 @@ export function computerDnsMatches(current: string[] | null | undefined, desired
   return have.length === want.length && have.every((server, index) => server === want[index]);
 }
 
+/** Where the injected Chromium proxy policy lands in every computer. */
+export const PROXY_POLICY_TARGET = "/etc/chromium/policies/managed/rakazo-proxy.json";
+
+const PROXY_PROTOCOLS = new Set(["http:", "https:", "socks5:", "socks5h:"]);
+
+/**
+ * One proxy for everything a computer does, from SANDBOX_COMPUTER_PROXY: an http(s) or socks5
+ * URL such as `http://host.docker.internal:8118`. Unset keeps computers direct. Shell tools get
+ * it as HTTP(S)_PROXY env; Chromium ignores env, so it also arrives as a managed policy file.
+ */
+export function resolveComputerProxy(value = process.env.SANDBOX_COMPUTER_PROXY) {
+  const proxy = (value ?? "").trim();
+  if (!proxy) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(proxy);
+  } catch {
+    throw new Error(
+      `Unsupported SANDBOX_COMPUTER_PROXY value "${proxy}": expected an http, https or socks5 URL`,
+    );
+  }
+  if (!PROXY_PROTOCOLS.has(parsed.protocol)) {
+    throw new Error(
+      `Unsupported SANDBOX_COMPUTER_PROXY value "${proxy}": scheme must be http, https or socks5`,
+    );
+  }
+  return proxy;
+}
+
+/** Hosts and ranges that stay direct, from SANDBOX_COMPUTER_NO_PROXY (comma-separated). */
+export function resolveComputerNoProxy(value = process.env.SANDBOX_COMPUTER_NO_PROXY) {
+  const list = (value ?? "").trim();
+  return list || "localhost,127.0.0.1,::1";
+}
+
+/** The proxy as container env, for every tool that reads it (curl, npm, pip…). */
+export function computerProxyEnv(proxy: string | undefined, noProxy = resolveComputerNoProxy()) {
+  if (!proxy) return [];
+  return [
+    `HTTP_PROXY=${proxy}`,
+    `HTTPS_PROXY=${proxy}`,
+    `http_proxy=${proxy}`,
+    `https_proxy=${proxy}`,
+    `NO_PROXY=${noProxy}`,
+    `no_proxy=${noProxy}`,
+  ];
+}
+
+/** Whether a container carries exactly the proxy env configured (none configured: none set). */
+export function computerProxyEnvMatches(
+  current: string[] | null | undefined,
+  desired: string[],
+): boolean {
+  const keys = new Set([
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+  ]);
+  const have = (current ?? []).filter((entry) => keys.has(entry.slice(0, entry.indexOf("="))));
+  return have.length === desired.length && desired.every((entry) => have.includes(entry));
+}
+
+/** The Chromium managed-policy file that gives the visible browser the same proxy. */
+export function computerProxyPolicyJson(proxy: string, noProxy: string) {
+  return `${JSON.stringify(
+    {
+      ProxyMode: "fixed_servers",
+      ProxyServer: proxy,
+      ProxyBypassList: noProxy,
+    },
+    null,
+    2,
+  )}\n`;
+}
+
 /** A host directory mounted into every computer (SANDBOX_COMPUTER_MOUNTS). */
 export interface ComputerMount {
   source: string;
@@ -396,7 +474,10 @@ export function computerMountsMatch(
   desired: ComputerMount[],
 ) {
   const binds = (info.HostConfig.Mounts ?? []).filter(
-    (mount) => mount.Type === "bind" && mount.Target !== "/home/rakazo",
+    (mount) =>
+      mount.Type === "bind" &&
+      mount.Target !== "/home/rakazo" &&
+      mount.Target !== PROXY_POLICY_TARGET,
   );
   const sources = labeledMountSources(info.Config.Labels);
   return (
@@ -552,6 +633,14 @@ export interface ComputerCreateInput {
   publishControlPort?: boolean;
   dns?: string[];
   mounts?: ComputerMount[];
+  /** Proxy env entries (see computerProxyEnv); unset keeps the computer direct. */
+  proxyEnv?: string[];
+  /**
+   * The already-written policy file mounted read-only at PROXY_POLICY_TARGET. `volume` rides the
+   * same named volume as the bot homes when the supervisor's data dir is one; otherwise the
+   * plain path binds.
+   */
+  proxyPolicy?: { path: string; volume?: { name: string; subpath: string } };
 }
 
 interface PointerInput {
@@ -570,6 +659,45 @@ export type SandboxInput =
 export function containerCreateOptions(input: ComputerCreateInput) {
   const ports = computerPortBindings(input.publishControlPort);
   const extraMounts = (input.mounts ?? []).map(computerMountSettings);
+  // A single file, mounted read-only into the image's managed-policies directory, so the
+  // operator's proxy reaches Chromium without rebuilding the image or running as root.
+  const proxyPolicyMount = input.proxyPolicy
+    ? input.proxyPolicy.volume
+      ? ({
+          Type: "volume",
+          Source: input.proxyPolicy.volume.name,
+          Target: PROXY_POLICY_TARGET,
+          ReadOnly: true,
+          VolumeOptions: {
+            NoCopy: true,
+            Subpath: input.proxyPolicy.volume.subpath,
+          } as Docker.MountSettings["VolumeOptions"],
+        } as Docker.MountSettings)
+      : ({
+          Type: "bind",
+          Source: input.proxyPolicy.path,
+          Target: PROXY_POLICY_TARGET,
+          ReadOnly: true,
+        } as Docker.MountSettings)
+    : undefined;
+  const mounts = [
+    ...(input.homeVolume
+      ? [
+          {
+            Type: "volume" as const,
+            Source: input.homeVolume.name,
+            Target: "/home/rakazo",
+            // Docker makes Labels and DriverConfig optional; dockerode's types do not.
+            VolumeOptions: {
+              NoCopy: true,
+              Subpath: input.homeVolume.subpath,
+            } as Docker.MountSettings["VolumeOptions"],
+          },
+        ]
+      : []),
+    ...extraMounts,
+    ...(proxyPolicyMount ? [proxyPolicyMount] : []),
+  ];
   return {
     Image: input.image,
     name: input.name,
@@ -583,6 +711,7 @@ export function containerCreateOptions(input: ComputerCreateInput) {
       "NPM_CONFIG_PREFIX=/home/rakazo/.local",
       "PIP_USER=1",
       ...(input.controlToken ? [`RAKAZO_COMPUTER_CONTROL_TOKEN=${input.controlToken}`] : []),
+      ...(input.proxyEnv ?? []),
     ],
     Labels: {
       "rakazo.managed": "true",
@@ -593,25 +722,10 @@ export function containerCreateOptions(input: ComputerCreateInput) {
     ExposedPorts: ports.ExposedPorts,
     HostConfig: {
       ...(input.homeVolume
-        ? {
-            Binds: undefined,
-            Mounts: [
-              {
-                Type: "volume" as const,
-                Source: input.homeVolume.name,
-                Target: "/home/rakazo",
-                // Docker makes Labels and DriverConfig optional; dockerode's types do not.
-                VolumeOptions: {
-                  NoCopy: true,
-                  Subpath: input.homeVolume.subpath,
-                } as Docker.MountSettings["VolumeOptions"],
-              },
-              ...extraMounts,
-            ],
-          }
+        ? { Binds: undefined, Mounts: mounts }
         : {
             Binds: [`${input.homePath}:/home/rakazo`],
-            Mounts: extraMounts.length ? extraMounts : undefined,
+            Mounts: mounts.length ? mounts : undefined,
           }),
       PortBindings: ports.PortBindings,
       ShmSize: 256 * 1024 * 1024,
