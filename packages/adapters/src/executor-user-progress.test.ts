@@ -15,7 +15,11 @@ import { createRunExecutor } from "./executor.js";
 import { createJobReconciler } from "./job-reconciler.js";
 import type * as ModelVisionModule from "./model-vision.js";
 import { PEER_NOTHING_NEW_REPLY } from "./silent-reply.js";
-import { MID_TURN_PROGRESS_MIN_TURN_AGE_MS, userProgressClientNonce } from "./user-progress.js";
+import {
+  MID_TURN_PROGRESS_BUDGET_USED_NOTE,
+  midTurnProgressTooSoonNote,
+  userProgressClientNonce,
+} from "./user-progress.js";
 
 vi.mock("./computer-lifecycle.js", async (importOriginal) => ({
   ...(await importOriginal<typeof ComputerLifecycleModule>()),
@@ -768,13 +772,20 @@ describe("notes that can't be posted as messages", () => {
     };
     const notYet = {
       ok: true,
-      note: `This update was not posted because the turn just started. Keep working and put anything the person needs in your final reply. Once the turn has run ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds, a later update can be posted.`,
+      note: midTurnProgressTooSoonNote(),
     };
     const stop = {
       ok: true,
-      note: "This update was not posted. The chat already has enough interim messages for this run. Do not send more progress updates — keep working and put everything in your final reply.",
+      note: MID_TURN_PROGRESS_BUDGET_USED_NOTE,
     };
-    expect(await update()).toEqual({ result: notYet, sent: [] });
+    expect(await update()).toEqual({
+      result: { ok: true },
+      sent: ["On it, checking now."],
+    });
+    expect(await update({ earlier: ["First."] })).toEqual({
+      result: notYet,
+      sent: ["First."],
+    });
 
     const earlier = ["One.", "Two.", "Three."];
     const longTurn = new Date(Date.now() - 120_000);
@@ -785,18 +796,12 @@ describe("notes that can't be posted as messages", () => {
     ).toEqual({ result: notYet, sent: [...earlier, "Yes, still on it."] });
   });
 
-  it("posts one heads-up at once once a fresh turn calls a browser or desktop tool", async () => {
-    const sent = async (
-      trigger: string,
-      step: string,
-      graphical = true,
-      stepArgs: Record<string, unknown> = {},
-    ) => {
+  it("posts the first heads-up at once on a conversational turn, even before a long tool", async () => {
+    const sent = async (trigger: string, step?: string) => {
       const { messages } = await runTurn("", false, undefined, [], "fyi", {
         trigger,
-        graphical,
         runtime: async function* (request) {
-          await request.executeTool!(step, stepArgs, "call-0").catch(() => undefined);
+          if (step) await request.executeTool!(step, {}, "call-0").catch(() => undefined);
           for (const [index, message] of [
             "This will take a few minutes.",
             "Still going.",
@@ -809,14 +814,11 @@ describe("notes that can't be posted as messages", () => {
       return sentTexts(messages);
     };
     const headsUp = ["This will take a few minutes."];
-    expect(await sent("user", "computer_observe")).toEqual(headsUp);
-    expect(await sent("messaging", "browser_snapshot")).toEqual(headsUp);
-    expect(await sent("user", "shell", true, { command: "sleep 90" })).toEqual(headsUp);
-    // Other steps, tools this computer lacks, and runs nobody is waiting on keep the
-    // fresh-turn rule.
-    expect(await sent("user", "browser_snapshot", false)).toEqual([]);
+    expect(await sent("user")).toEqual(headsUp);
+    expect(await sent("messaging")).toEqual(headsUp);
+    expect(await sent("user", "read_file")).toEqual(headsUp);
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"])
-      expect(await sent(trigger, "browser_snapshot")).toEqual([]);
+      expect(await sent(trigger)).toEqual([]);
   });
 });
 
@@ -953,8 +955,8 @@ describe("a message from the person while the bot works", () => {
         })
       ).messages;
     expect(sentTexts(await answer(true))).toEqual(["Yes, still on it."]);
-    // Without the person's message the turn is too fresh for an interim message.
-    expect(sentTexts(await answer(false))).toEqual([]);
+    // The first heads-up of a conversational turn posts even without a mid-task message.
+    expect(sentTexts(await answer(false))).toEqual(["Yes, still on it."]);
   });
 
   it("keeps a plain answer with no step after it in the reply", async () => {

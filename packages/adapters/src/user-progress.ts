@@ -57,7 +57,8 @@ export const MID_TURN_PROGRESS_MAX_PER_RUN = 3;
 /**
  * Whether the run may post another durable interim chat message right now.
  * Short turns stay silent in durable chat; long turns keep a few replyable
- * beats without flooding the thread.
+ * beats without flooding the thread. The first conversational heads-up bypasses
+ * the age wait separately (see canPostLongTaskHeadsUp).
  */
 export function midTurnProgressBudgetAllows(publishedCount: number, turnAgeMs: number): boolean {
   return (
@@ -69,6 +70,15 @@ export function midTurnProgressBudgetAllows(publishedCount: number, turnAgeMs: n
 export function midTurnProgressBudgetUsed(publishedCount: number): boolean {
   return publishedCount >= MID_TURN_PROGRESS_MAX_PER_RUN;
 }
+
+/** Tool note when a later interim is refused because the 60s wait has not elapsed. */
+export function midTurnProgressTooSoonNote(): string {
+  return `This update was not posted. Save it for a later milestone or the final reply. A later update can be posted once the turn has run ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds.`;
+}
+
+/** Tool note when the per-run interim cap is already used. */
+export const MID_TURN_PROGRESS_BUDGET_USED_NOTE =
+  "This update was not posted. The chat already has enough interim messages for this run. Put remaining points in the final reply.";
 
 /**
  * The message_user cap: `RAKAZO_MESSAGE_USER_MAX_CHARS` when it is a positive integer,

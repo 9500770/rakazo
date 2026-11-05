@@ -2,7 +2,8 @@ import type { MessageBlock } from "@rakazo/contracts";
 import { isToolActivityBlock } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
-import { longWorkProgressGuidance } from "./run-replies.js";
+import { canPostLongTaskHeadsUp } from "./run-progress.js";
+import { ANSWER_BEFORE_ASK, longWorkProgressGuidance } from "./run-replies.js";
 import {
   assistantTurnSeparator,
   botMessageOutcomeFromMidTurn,
@@ -11,11 +12,13 @@ import {
   finalBlocksAfterMidTurnProgress,
   isProgressMessageTruncated,
   isUserProgressClientNonce,
+  MID_TURN_PROGRESS_BUDGET_USED_NOTE,
   MID_TURN_PROGRESS_MAX_PER_RUN,
   MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
   messageUserMaxLength,
   midTaskMessagePrompt,
   midTurnProgressBudgetAllows,
+  midTurnProgressTooSoonNote,
   NARRATION_STATUS_MAX_LENGTH,
   narrationStatusLine,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
@@ -59,6 +62,14 @@ describe("messageUserMaxLength", () => {
     expect(messageUserTool().inputSchema.properties.message.maxLength).toBe(500);
     expect(messageUserTool().description).toContain("cut off silently at 500 characters");
     expect(longWorkProgressGuidance()).toContain("message_user is capped at 500 characters");
+    expect(longWorkProgressGuidance().startsWith(ANSWER_BEFORE_ASK)).toBe(true);
+    expect(longWorkProgressGuidance()).toContain(
+      "Before the first tool call on such a task, tell the person right away with message_user",
+    );
+    expect(longWorkProgressGuidance()).toContain(
+      "Do not go silent through a long stretch of tool calls",
+    );
+    expect(longWorkProgressGuidance()).not.toContain("stay quiet until something changes");
   });
 
   it("applies RAKAZO_MESSAGE_USER_MAX_CHARS to the schema, description, and guidance", () => {
@@ -111,6 +122,42 @@ describe("midTurnProgressBudgetAllows", () => {
     const age = MID_TURN_PROGRESS_MIN_TURN_AGE_MS * 10;
     expect(midTurnProgressBudgetAllows(MID_TURN_PROGRESS_MAX_PER_RUN, age)).toBe(false);
     expect(midTurnProgressBudgetAllows(MID_TURN_PROGRESS_MAX_PER_RUN + 1, age)).toBe(false);
+  });
+});
+
+describe("canPostLongTaskHeadsUp", () => {
+  const ctx = (trigger: string, count = 0) =>
+    ({
+      run: { trigger },
+      state: { reply: { midTurnProgressCount: count } },
+    }) as never;
+
+  it("allows the first conversational heads-up before any long tool", () => {
+    expect(canPostLongTaskHeadsUp(ctx("user"))).toBe(true);
+    expect(canPostLongTaskHeadsUp(ctx("messaging"))).toBe(true);
+  });
+
+  it("does not skip the 60s wait after the first interim", () => {
+    expect(canPostLongTaskHeadsUp(ctx("user", 1))).toBe(false);
+  });
+
+  it("keeps silent runs on the fresh-turn rule", () => {
+    for (const trigger of ["routine", "webhook", "reaction", "bot_message"]) {
+      expect(canPostLongTaskHeadsUp(ctx(trigger))).toBe(false);
+    }
+  });
+});
+
+describe("mid-turn progress rejection notes", () => {
+  it("points at a later milestone or the final reply instead of telling the model to stay quiet", () => {
+    expect(midTurnProgressTooSoonNote()).toContain("later milestone");
+    expect(midTurnProgressTooSoonNote()).toContain(
+      `${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds`,
+    );
+    expect(MID_TURN_PROGRESS_BUDGET_USED_NOTE).toContain("Put remaining points in the final reply");
+    expect(`${midTurnProgressTooSoonNote()}\n${MID_TURN_PROGRESS_BUDGET_USED_NOTE}`).not.toMatch(
+      /Keep working|Do not send more progress updates/i,
+    );
   });
 });
 
