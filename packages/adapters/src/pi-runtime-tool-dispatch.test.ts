@@ -1119,12 +1119,9 @@ describe("Pi connector tool dispatch", () => {
     // A concurrent batch can read the routine list before schedule_create writes
     // the row, so the bot reports "no schedules" for a reminder it just made.
     expect(modes.get("schedule_create")).toBe("sequential");
-    expect(modes.get("schedule_list")).toBe("sequential");
-    // schedule_cancel is deferred, so the use_tool that runs it is sequential.
+    // Deferred schedule tools and request_secret run through a sequential use_tool.
     expect(modes.get("use_tool")).toBe("sequential");
     expect(modes.get("remember")).toBe("sequential");
-    // Two code requests in one batch would each wait on a card that one answer approves.
-    expect(modes.get("request_secret")).toBe("sequential");
     expect(modes.get("destination_write")).toBe("default");
   });
 
@@ -2568,7 +2565,10 @@ describe("Pi connector tool dispatch", () => {
       readOnly: false,
       content: `---\nname: large-skill\n---\n${"1. Step kept for skill_update.\n".repeat(600)}`,
     };
-    fakeAgentState.invoke = { name: "skill_read", args: { name: skill.name } };
+    fakeAgentState.invoke = {
+      name: "use_tool",
+      args: { name: "skill_read", arguments: { name: skill.name } },
+    };
     const runtime = new PiAgentRuntime();
 
     for await (const _event of runtime.run(

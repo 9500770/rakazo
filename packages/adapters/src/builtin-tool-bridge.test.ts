@@ -32,31 +32,24 @@ describe("built-in tool bridge", () => {
     const { listed, deferred } = partitionTools(ownerChat);
     expect(listed.map((tool) => tool.name).sort()).toEqual([
       "ask_user",
-      "attach_file",
-      "connect_app",
       "find_tool",
       "list_files",
       "message_user",
       "read_file",
-      "read_history",
       "remember",
-      "request_secret",
       "request_takeover",
       "run_subagent",
       "schedule_create",
-      "schedule_list",
-      "search_history",
       "shell",
-      "skill_read",
       "update_bot",
-      "update_preferences",
       "use_tool",
       "web_fetch",
       "web_search",
       "write_file",
     ]);
-    // request_secret carries the card and contact kinds; update_bot carries instructions paging.
-    expect(definitionBytes(listed)).toBeLessThanOrEqual(31_878);
+    // Only everyday tools stay listed; everything else is found on demand, so a
+    // tool must earn the schema bytes it adds to every model call.
+    expect(definitionBytes(listed)).toBeLessThanOrEqual(21_526);
     expect(deferred.map((tool) => tool.name)).toEqual(
       expect.arrayContaining(["render_plot", "create_space", "generate_secret", "scratchpad_add"]),
     );
