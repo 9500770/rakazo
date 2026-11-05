@@ -52,7 +52,9 @@ function dispatchContext(tainted: boolean) {
       reply: {
         midTurnProgressCount: 0,
         turnStartedAtMs: Date.now(),
-        remindedSilentLongWork: false,
+        lastDurablePostAtMs: Date.now(),
+        lastSilentWorkReminderAt: 0,
+        silentWorkReminders: 0,
       },
     },
     trust: {

@@ -356,6 +356,7 @@ async function onSteered(ctx: RunContext, event: RuntimeEvent<"steered">) {
   }
   reply.progressBudgetStart = reply.midTurnProgressCount;
   reply.turnStartedAtMs = now;
+  reply.lastDurablePostAtMs = now;
   reply.steeringReplyPending = true;
   reply.narrationStatusShowing = false;
 }

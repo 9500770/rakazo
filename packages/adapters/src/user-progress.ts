@@ -55,10 +55,17 @@ export const STEERING_RESET_MIN_GAP_MS = 60_000;
 export const MID_TURN_PROGRESS_MAX_PER_RUN = 3;
 
 /**
- * Tool note once a conversational run passes the interim wait with nothing posted. It leaves
- * the call to the model: a turn about to answer should just answer, not post a status first.
+ * Tool note whenever a conversational run has left the person unheard-of past the interim
+ * wait. It leaves the call to the model: a turn about to answer should just answer, not post
+ * a status first.
  */
-export const SILENT_LONG_WORK_HEADS_UP_NOTE = `This turn has run over ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds and the person has seen no update. If more work remains, tell them in a sentence with message_user; if you are done, just reply.`;
+export function silentLongWorkNote(silentMs: number): string {
+  const seconds = Math.max(MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000, Math.round(silentMs / 1000));
+  return `The person has heard nothing from you for over ${seconds} seconds. If more work remains, tell them in a sentence with message_user; if you are done, just reply.`;
+}
+
+/** Per-run cap on silent-work reminders, so a very long run is not nagged without end. */
+export const SILENT_WORK_REMINDERS_MAX_PER_RUN = 2;
 
 /**
  * Whether the run may post another durable interim chat message right now.

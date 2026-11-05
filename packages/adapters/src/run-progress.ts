@@ -22,8 +22,10 @@ import {
   isUserProgressClientNonce,
   MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
   midTurnProgressBudgetAllows,
+  midTurnProgressBudgetUsed,
   narrationStatusLine,
-  SILENT_LONG_WORK_HEADS_UP_NOTE,
+  SILENT_WORK_REMINDERS_MAX_PER_RUN,
+  silentLongWorkNote,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
   userProgressClientNonce,
 } from "./user-progress.js";
@@ -47,6 +49,9 @@ export async function createReplyState(
     midTurnUserTexts: [],
     midTurnProgressCount: 0,
     turnStartedAtMs: run.startedAt?.getTime() ?? Date.now(),
+    lastDurablePostAtMs: run.startedAt?.getTime() ?? Date.now(),
+    lastSilentWorkReminderAt: 0,
+    silentWorkReminders: 0,
     progressBudgetStart: 0,
     steeringReplyPending: false,
     steeringResets: 0,
@@ -60,7 +65,6 @@ export async function createReplyState(
     lastProgressAt: 0,
     hasStreamedText: false,
     assistantTurnBreakPending: false,
-    remindedSilentLongWork: false,
     redactor: createStreamingRedactor(secrets),
   };
   const priorProgress = await deps.prisma.message.findMany({
@@ -81,6 +85,8 @@ export async function createReplyState(
     reply.publishedMidTurnUserMessage = true;
     reply.midTurnProgressCount += 1;
   }
+  // A resumed turn reconnects with the person already briefed; silence counts from here.
+  if (reply.midTurnProgressCount > 0) reply.lastDurablePostAtMs = Date.now();
   return reply;
 }
 
@@ -119,6 +125,7 @@ export function progressSinceBudgetStart(reply: ReplyState) {
 export function nextProgressNonce(ctx: RunContext) {
   const { reply } = ctx.state;
   reply.steeringReplyPending = false;
+  reply.lastDurablePostAtMs = Date.now();
   return userProgressClientNonce(ctx.run.id, reply.midTurnProgressCount++);
 }
 
@@ -127,30 +134,38 @@ export function canPublishDurableNarration(ctx: RunContext) {
 }
 
 /**
- * Attach a one-shot reminder once a conversational turn has run past the interim wait with
- * nothing posted. Turn age is the signal because a tool's name does not say how long it
- * runs; later tools stay quiet so a long computer session is not flooded with the same note.
+ * Attach a reminder whenever a conversational turn has left the person unheard-of for the
+ * interim wait — not only before the first post, so a turn that acked once cannot grind on
+ * in silence for the rest of its run. Silence since the last heard-from moment is the signal
+ * because a tool's name does not say how long it runs; each reminder resets the quiet
+ * stretch, and the per-run cap keeps a long computer session from being nagged forever.
  */
 export function withSilentLongWorkReminder(ctx: RunContext, result: unknown): unknown {
   const { reply } = ctx.state;
+  const now = Date.now();
+  const sinceHeard = now - Math.max(reply.lastDurablePostAtMs, reply.lastSilentWorkReminderAt);
   if (
-    reply.remindedSilentLongWork ||
-    Date.now() - reply.turnStartedAtMs < MID_TURN_PROGRESS_MIN_TURN_AGE_MS ||
-    !canPostFirstHeadsUp(ctx) ||
-    ctx.tools.disabled.has("message_user") ||
     typeof result !== "object" ||
     result === null ||
     Array.isArray(result) ||
-    (result as { terminate?: unknown }).terminate === true
+    (result as { terminate?: unknown }).terminate === true ||
+    !isConversationalRun(ctx.run.trigger) ||
+    runAllowsSilentEmpty(ctx.run.trigger) ||
+    ctx.tools.disabled.has("message_user") ||
+    midTurnProgressBudgetUsed(progressSinceBudgetStart(reply)) ||
+    reply.silentWorkReminders >= SILENT_WORK_REMINDERS_MAX_PER_RUN ||
+    sinceHeard < MID_TURN_PROGRESS_MIN_TURN_AGE_MS
   ) {
     return result;
   }
-  reply.remindedSilentLongWork = true;
+  reply.silentWorkReminders += 1;
+  reply.lastSilentWorkReminderAt = now;
+  const note = silentLongWorkNote(sinceHeard);
   const record = result as { note?: unknown };
   if (typeof record.note === "string" && record.note.trim()) {
-    return { ...record, note: `${record.note}\n${SILENT_LONG_WORK_HEADS_UP_NOTE}` };
+    return { ...record, note: `${record.note}\n${note}` };
   }
-  return { ...record, note: SILENT_LONG_WORK_HEADS_UP_NOTE };
+  return { ...record, note };
 }
 
 export function flushPendingTools(reply: ReplyState) {

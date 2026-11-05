@@ -29,7 +29,8 @@ import {
   midTurnProgressTooSoonNote,
   NARRATION_STATUS_MAX_LENGTH,
   narrationStatusLine,
-  SILENT_LONG_WORK_HEADS_UP_NOTE,
+  SILENT_WORK_REMINDERS_MAX_PER_RUN,
+  silentLongWorkNote,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
   userProgressClientNonce,
 } from "./user-progress.js";
@@ -231,8 +232,8 @@ describe("silent long-work reminder", () => {
     options: {
       trigger?: string;
       count?: number;
-      turnAgeMs?: number;
-      reminded?: boolean;
+      heardAgoMs?: number;
+      reminders?: number;
       disabled?: string[];
     } = {},
   ) =>
@@ -241,36 +242,59 @@ describe("silent long-work reminder", () => {
       state: {
         reply: {
           midTurnProgressCount: options.count ?? 0,
-          turnStartedAtMs: Date.now() - (options.turnAgeMs ?? long),
-          remindedSilentLongWork: options.reminded ?? false,
+          progressBudgetStart: 0,
+          turnStartedAtMs: Date.now() - (options.heardAgoMs ?? long),
+          lastDurablePostAtMs: Date.now() - (options.heardAgoMs ?? long),
+          lastSilentWorkReminderAt: 0,
+          silentWorkReminders: options.reminders ?? 0,
         },
       },
       tools: { disabled: new Set(options.disabled ?? []) },
     }) as never;
 
   it("offers a heads-up without forcing one when the work is done", () => {
-    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toContain("message_user");
-    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toContain("if you are done, just reply");
-    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).not.toMatch(/Keep working/i);
+    const note = silentLongWorkNote(long);
+    expect(note).toContain("message_user");
+    expect(note).toContain("if you are done, just reply");
+    expect(note).not.toMatch(/Keep working/i);
   });
 
-  it("attaches the note once after a silent minute, whatever the tool", () => {
+  it("attaches the note after a silent minute, whatever the tool", () => {
     const first = ctx();
     expect(withSilentLongWorkReminder(first, { ok: true })).toEqual({
       ok: true,
-      note: SILENT_LONG_WORK_HEADS_UP_NOTE,
+      note: silentLongWorkNote(long),
     });
     expect(withSilentLongWorkReminder(first, { stdout: "" })).toEqual({ stdout: "" });
     expect(withSilentLongWorkReminder(ctx(), { note: "Saved." })).toEqual({
-      note: `Saved.\n${SILENT_LONG_WORK_HEADS_UP_NOTE}`,
+      note: `Saved.\n${silentLongWorkNote(long)}`,
     });
   });
 
-  it("leaves fresh turns, later interims, and silent runs alone", () => {
-    expect(withSilentLongWorkReminder(ctx({ turnAgeMs: long - 1_000 }), { ok: true })).toEqual({
+  it("keeps nudging a turn that acked once and went quiet again", () => {
+    expect(withSilentLongWorkReminder(ctx({ count: 1 }), { ok: true })).toMatchObject({
+      ok: true,
+      note: expect.stringContaining("message_user"),
+    });
+  });
+
+  it("waits another quiet minute after each reminder and caps the run", () => {
+    const reminded = ctx({ reminders: 1 }) as {
+      state: { reply: { lastSilentWorkReminderAt: number } };
+    };
+    reminded.state.reply.lastSilentWorkReminderAt = Date.now();
+    expect(withSilentLongWorkReminder(reminded as never, { ok: true })).toEqual({ ok: true });
+    const capped = ctx({ reminders: SILENT_WORK_REMINDERS_MAX_PER_RUN });
+    expect(withSilentLongWorkReminder(capped, { ok: true })).toEqual({ ok: true });
+  });
+
+  it("leaves fresh turns, spent budgets, and silent runs alone", () => {
+    expect(withSilentLongWorkReminder(ctx({ heardAgoMs: long - 1_000 }), { ok: true })).toEqual({
       ok: true,
     });
-    expect(withSilentLongWorkReminder(ctx({ count: 1 }), { ok: true })).toEqual({ ok: true });
+    expect(
+      withSilentLongWorkReminder(ctx({ count: MID_TURN_PROGRESS_MAX_PER_RUN }), { ok: true }),
+    ).toEqual({ ok: true });
     expect(withSilentLongWorkReminder(ctx({ trigger: "routine" }), { ok: true })).toEqual({
       ok: true,
     });
