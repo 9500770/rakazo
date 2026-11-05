@@ -594,6 +594,11 @@ describe("runReplyGuidance", () => {
     expect(runPromotesMidTurnNarration("messaging")).toBe(true);
     expect(runReplyGuidance("user")).toBe(longWorkProgressGuidance());
     expect(runReplyGuidance("user")).toContain("message_user");
+    expect(runReplyGuidance("user")).toContain("ask_user");
+    expect(runReplyGuidance("user")).toContain(
+      "Do not go silent through a long stretch of tool calls",
+    );
+    expect(runReplyGuidance("user")).not.toContain("stay quiet until something changes");
     expect(runReplyGuidance("messaging")).toBe(longWorkProgressGuidance());
   });
 });

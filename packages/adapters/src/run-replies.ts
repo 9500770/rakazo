@@ -3,8 +3,15 @@ import { isBackgroundRunTrigger } from "@rakazo/core";
 import { NO_RESPONSE } from "./silent-reply.js";
 import { messageUserMaxLength } from "./user-progress.js";
 
+/**
+ * Put a known answer in the final reply. Ask only when the goal or scope is
+ * still unclear and a wrong guess would change the result.
+ */
+export const ANSWER_BEFORE_ASK =
+  "When you already have the answer, put it in the final reply; do not replace it with ask_user, a clarifying question, or a choice card. When the goal or scope is unclear and a wrong guess would change the result, ask or confirm with ask_user before acting.";
+
 export function longWorkProgressGuidance(maxLength = messageUserMaxLength()): string {
-  return `Send progress updates only when the work will take minutes — long computer tasks or multi-step jobs — never for quick replies. When such a task starts, tell the person right away with message_user, in a sentence or two, what you are doing and roughly how long it will take, then stay quiet until something changes. Even then send at most a few brief updates (a sentence or two each), not one per tool call, and do not narrate routine steps. Thinking stays private. message_user is capped at ${maxLength} characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply, never split across message_user calls, and never assume a message_user update already delivered your content.`;
+  return `${ANSWER_BEFORE_ASK} Send progress updates only when the work will take minutes — long computer tasks or multi-step jobs — never for quick replies. Before the first tool call on such a task, tell the person right away with message_user, in a sentence or two, what you are doing. Then send a brief update at real milestones (a sentence or two each), not one per tool call, and do not narrate routine steps. Do not go silent through a long stretch of tool calls. Thinking stays private. message_user is capped at ${maxLength} characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply, never split across message_user calls, and never assume a message_user update already delivered your content.`;
 }
 
 export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to stay silent when there is nothing to report, the entire final assistant reply must be exactly ${NO_RESPONSE} — no surrounding prose, no variants, no progress updates, no all-clear, and no meta note that you are staying silent. Do not call message_user unless you have something to report.`;
@@ -40,7 +47,7 @@ export function replyGuidanceForOfferedTools(
 ): string | undefined {
   if (!disabled?.has("message_user")) return guidance;
   if (guidance === longWorkProgressGuidance()) {
-    return "Always put the complete final answer in your normal reply.";
+    return `${ANSWER_BEFORE_ASK} Always put the complete final answer in your normal reply.`;
   }
   if (guidance === REACTION_SILENT_REPLY_GUIDANCE) {
     return guidance.replace(", with no message_user call.", ".");

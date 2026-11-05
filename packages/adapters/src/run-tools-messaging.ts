@@ -21,9 +21,10 @@ import type { ToolHandlers } from "./run-tool-gate.js";
 import {
   clampUserProgressMessage,
   isProgressMessageTruncated,
-  MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
+  MID_TURN_PROGRESS_BUDGET_USED_NOTE,
   messageUserMaxLength,
   midTurnProgressBudgetUsed,
+  midTurnProgressTooSoonNote,
 } from "./user-progress.js";
 
 /** Messages to the user, other bots and connected agents, and calls. */
@@ -92,8 +93,8 @@ export const messagingTools: ToolHandlers = {
       return call.finish({
         ok: true,
         note: midTurnProgressBudgetUsed(progressSinceBudgetStart(reply))
-          ? "This update was not posted. The chat already has enough interim messages for this run. Do not send more progress updates — keep working and put everything in your final reply."
-          : `This update was not posted because the turn just started. Keep working and put anything the person needs in your final reply. Once the turn has run ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds, a later update can be posted.`,
+          ? MID_TURN_PROGRESS_BUDGET_USED_NOTE
+          : midTurnProgressTooSoonNote(),
       });
     }
     await publishMessage(deps, run, "bot", [{ kind: "text", text }], true, nextProgressNonce(ctx));

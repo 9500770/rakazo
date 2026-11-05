@@ -12,13 +12,10 @@ import {
 } from "@rakazo/core";
 import type { Run } from "@rakazo/db";
 import type { ExecutorDeps } from "./executor-deps.js";
-import { IMAGE_RETURNING_COMPUTER_TOOLS } from "./model-vision.js";
 import type { ReplyState, RunContext } from "./run-context.js";
 import { publishMessage } from "./run-messages.js";
 import { runAllowsSilentEmpty, runPromotesMidTurnNarration } from "./run-replies.js";
-import { PAGE_BROWSER_TOOL_NAMES } from "./run-tool-selection.js";
 import { isExactNoResponse } from "./silent-reply.js";
-import { USER_COMPUTER_SCREEN_TOOLS } from "./user-computer-tools.js";
 import {
   clampUserProgressMessage,
   extractNarrationText,
@@ -50,7 +47,6 @@ export async function createReplyState(
     turnStartedAtMs: run.startedAt?.getTime() ?? Date.now(),
     progressBudgetStart: 0,
     steeringReplyPending: false,
-    computerTaskStarted: false,
     steeringResets: 0,
     lastSteeringResetAt: Number.NEGATIVE_INFINITY,
     workingNotes: [],
@@ -97,27 +93,14 @@ export function canPublishDurableProgress(reply: ReplyState) {
   );
 }
 
-const LONG_TASK_TOOLS = new Set([
-  ...IMAGE_RETURNING_COMPUTER_TOOLS,
-  ...PAGE_BROWSER_TOOL_NAMES,
-  ...USER_COMPUTER_SCREEN_TOOLS,
-  // A backgrounded shell can run for the whole ceiling, as long as a browser or desktop task.
-  "shell",
-  "user_computer_shell",
-]);
-
-export function noteComputerTaskStep(reply: ReplyState, toolName: string) {
-  if (LONG_TASK_TOOLS.has(toolName)) reply.computerTaskStarted = true;
-}
-
 /**
- * Long tasks often take minutes, so the run's first interim message may tell the person
- * so at once. Runs nobody is waiting on keep the fresh-turn rule.
+ * The first interim of a conversational turn may acknowledge the plan at once,
+ * before a long tool starts. Later beats still wait for the 60s / max-3 budget.
+ * Runs nobody is waiting on keep the fresh-turn rule.
  */
 export function canPostLongTaskHeadsUp(ctx: RunContext) {
   const { reply } = ctx.state;
   return (
-    reply.computerTaskStarted &&
     reply.midTurnProgressCount === 0 &&
     isConversationalRun(ctx.run.trigger) &&
     !runAllowsSilentEmpty(ctx.run.trigger)
