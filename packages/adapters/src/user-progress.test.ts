@@ -3,18 +3,21 @@ import { isToolActivityBlock } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
 import {
-  canPostLongTaskHeadsUp,
+  canPostFirstHeadsUp,
   canPublishDurableNarration,
   withSilentLongWorkReminder,
 } from "./run-progress.js";
-import { ANSWER_BEFORE_ASK, longWorkProgressGuidance } from "./run-replies.js";
+import {
+  ANSWER_BEFORE_ASK,
+  longWorkProgressGuidance,
+  replyGuidanceForOfferedTools,
+} from "./run-replies.js";
 import {
   assistantTurnSeparator,
   botMessageOutcomeFromMidTurn,
   clampUserProgressMessage,
   extractNarrationText,
   finalBlocksAfterMidTurnProgress,
-  isLongWorkTool,
   isProgressMessageTruncated,
   isUserProgressClientNonce,
   MID_TURN_PROGRESS_BUDGET_USED_NOTE,
@@ -70,10 +73,28 @@ describe("messageUserMaxLength", () => {
     expect(longWorkProgressGuidance()).toContain("message_user is capped at 500 characters");
     expect(longWorkProgressGuidance().startsWith(ANSWER_BEFORE_ASK)).toBe(true);
     expect(longWorkProgressGuidance()).toContain("with message_user before the first tool call");
+    expect(longWorkProgressGuidance()).toContain("not one per tool call");
     expect(longWorkProgressGuidance()).toContain(
       "Do not go silent through a long stretch of tool calls",
     );
     expect(longWorkProgressGuidance()).not.toContain("stay quiet until something changes");
+  });
+
+  it("names ask_user only as a card for questions with a few choices, and only when offered", () => {
+    expect(ANSWER_BEFORE_ASK).toContain("use ask_user when two to four choices fit");
+    const withoutCard = replyGuidanceForOfferedTools(
+      longWorkProgressGuidance(),
+      new Set(["ask_user"]),
+    );
+    expect(withoutCard).not.toContain("ask_user");
+    expect(withoutCard).toContain("Ask only when the goal or scope is unclear");
+    expect(withoutCard).toContain("message_user before the first tool call");
+    const neither = replyGuidanceForOfferedTools(
+      longWorkProgressGuidance(),
+      new Set(["ask_user", "message_user"]),
+    );
+    expect(neither).not.toMatch(/ask_user|message_user/);
+    expect(neither).toContain("Always put the complete final answer in your normal reply.");
   });
 
   it("applies RAKAZO_MESSAGE_USER_MAX_CHARS to the schema, description, and guidance", () => {
@@ -129,25 +150,25 @@ describe("midTurnProgressBudgetAllows", () => {
   });
 });
 
-describe("canPostLongTaskHeadsUp", () => {
+describe("canPostFirstHeadsUp", () => {
   const ctx = (trigger: string, count = 0) =>
     ({
       run: { trigger },
       state: { reply: { midTurnProgressCount: count } },
     }) as never;
 
-  it("allows the first conversational heads-up before any long tool", () => {
-    expect(canPostLongTaskHeadsUp(ctx("user"))).toBe(true);
-    expect(canPostLongTaskHeadsUp(ctx("messaging"))).toBe(true);
+  it("allows the first conversational message_user before any long tool", () => {
+    expect(canPostFirstHeadsUp(ctx("user"))).toBe(true);
+    expect(canPostFirstHeadsUp(ctx("messaging"))).toBe(true);
   });
 
   it("does not skip the 60s wait after the first interim", () => {
-    expect(canPostLongTaskHeadsUp(ctx("user", 1))).toBe(false);
+    expect(canPostFirstHeadsUp(ctx("user", 1))).toBe(false);
   });
 
   it("keeps silent runs on the fresh-turn rule", () => {
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"]) {
-      expect(canPostLongTaskHeadsUp(ctx(trigger))).toBe(false);
+      expect(canPostFirstHeadsUp(ctx(trigger))).toBe(false);
     }
   });
 });
@@ -169,12 +190,16 @@ describe("canPublishDurableNarration", () => {
       },
     }) as never;
 
-  it("promotes the first conversational narration before any tool", () => {
-    expect(canPublishDurableNarration(ctx("user"))).toBe(true);
-    expect(canPublishDurableNarration(ctx("messaging"))).toBe(true);
+  it("keeps a fresh turn's first narration off durable chat", () => {
+    expect(canPublishDurableNarration(ctx("user"))).toBe(false);
+    expect(canPublishDurableNarration(ctx("messaging"))).toBe(false);
+    expect(canPublishDurableNarration(ctx("user", { steering: true }))).toBe(true);
   });
 
-  it("keeps later narration on the 60s / max-3 budget", () => {
+  it("keeps narration on the 60s / max-3 budget", () => {
+    expect(
+      canPublishDurableNarration(ctx("user", { turnAgeMs: MID_TURN_PROGRESS_MIN_TURN_AGE_MS })),
+    ).toBe(true);
     expect(canPublishDurableNarration(ctx("user", { count: 1 }))).toBe(false);
     expect(
       canPublishDurableNarration(
@@ -191,77 +216,68 @@ describe("canPublishDurableNarration", () => {
     ).toBe(false);
   });
 
-  it("does not promote the first beat on silent or held-back runs", () => {
-    for (const trigger of ["routine", "webhook", "reaction", "bot_message"]) {
-      expect(canPublishDurableNarration(ctx(trigger))).toBe(false);
+  it("does not promote narration on held-back or background runs", () => {
+    for (const trigger of ["routine", "bot_message", "tickets"]) {
+      expect(
+        canPublishDurableNarration(ctx(trigger, { turnAgeMs: MID_TURN_PROGRESS_MIN_TURN_AGE_MS })),
+      ).toBe(false);
     }
   });
 });
 
 describe("silent long-work reminder", () => {
-  const ctx = (options: {
-    trigger?: string;
-    count?: number;
-    reminded?: boolean;
-    disabled?: string[];
-  }) =>
+  const long = MID_TURN_PROGRESS_MIN_TURN_AGE_MS;
+  const ctx = (
+    options: {
+      trigger?: string;
+      count?: number;
+      turnAgeMs?: number;
+      reminded?: boolean;
+      disabled?: string[];
+    } = {},
+  ) =>
     ({
       run: { trigger: options.trigger ?? "user" },
       state: {
         reply: {
           midTurnProgressCount: options.count ?? 0,
+          turnStartedAtMs: Date.now() - (options.turnAgeMs ?? long),
           remindedSilentLongWork: options.reminded ?? false,
         },
       },
       tools: { disabled: new Set(options.disabled ?? []) },
     }) as never;
 
-  it("names the tools that should nudge a silent conversational turn", () => {
-    expect(isLongWorkTool("computer_act")).toBe(true);
-    expect(isLongWorkTool("computer_observe")).toBe(true);
-    expect(isLongWorkTool("shell")).toBe(true);
-    expect(isLongWorkTool("browser_act")).toBe(true);
-    expect(isLongWorkTool("user_computer_shell")).toBe(true);
-    expect(isLongWorkTool("read_file")).toBe(false);
-    expect(isLongWorkTool("web_search")).toBe(false);
-    expect(isLongWorkTool("message_user")).toBe(false);
-    expect(isLongWorkTool("user_computer_policy")).toBe(false);
-  });
-
-  it("asks for a message_user heads-up instead of more silent work", () => {
+  it("offers a heads-up without forcing one when the work is done", () => {
     expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toContain("message_user");
-    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toMatch(/plan|progress/);
+    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toContain("if you are done, just reply");
     expect(SILENT_LONG_WORK_HEADS_UP_NOTE).not.toMatch(/Keep working/i);
   });
 
-  it("attaches the note once on the first silent long tool", () => {
-    const reply = { midTurnProgressCount: 0, remindedSilentLongWork: false };
-    const first = {
-      run: { trigger: "user" },
-      state: { reply },
-      tools: { disabled: new Set() },
-    } as never;
-    expect(withSilentLongWorkReminder(first, "computer_act", { ok: true })).toEqual({
+  it("attaches the note once after a silent minute, whatever the tool", () => {
+    const first = ctx();
+    expect(withSilentLongWorkReminder(first, { ok: true })).toEqual({
       ok: true,
       note: SILENT_LONG_WORK_HEADS_UP_NOTE,
     });
-    expect(reply.remindedSilentLongWork).toBe(true);
-    expect(withSilentLongWorkReminder(first, "shell", { stdout: "" })).toEqual({ stdout: "" });
+    expect(withSilentLongWorkReminder(first, { stdout: "" })).toEqual({ stdout: "" });
+    expect(withSilentLongWorkReminder(ctx(), { note: "Saved." })).toEqual({
+      note: `Saved.\n${SILENT_LONG_WORK_HEADS_UP_NOTE}`,
+    });
   });
 
-  it("leaves short tools and later interims alone", () => {
-    expect(withSilentLongWorkReminder(ctx({}), "read_file", { text: "hi" })).toEqual({
-      text: "hi",
-    });
-    expect(withSilentLongWorkReminder(ctx({ count: 1 }), "computer_act", { ok: true })).toEqual({
+  it("leaves fresh turns, later interims, and silent runs alone", () => {
+    expect(withSilentLongWorkReminder(ctx({ turnAgeMs: long - 1_000 }), { ok: true })).toEqual({
       ok: true,
     });
-    expect(withSilentLongWorkReminder(ctx({ trigger: "routine" }), "shell", { ok: true })).toEqual({
+    expect(withSilentLongWorkReminder(ctx({ count: 1 }), { ok: true })).toEqual({ ok: true });
+    expect(withSilentLongWorkReminder(ctx({ trigger: "routine" }), { ok: true })).toEqual({
       ok: true,
     });
-    expect(
-      withSilentLongWorkReminder(ctx({ disabled: ["message_user"] }), "shell", { ok: true }),
-    ).toEqual({ ok: true });
+    expect(withSilentLongWorkReminder(ctx({ disabled: ["message_user"] }), { ok: true })).toEqual({
+      ok: true,
+    });
+    expect(withSilentLongWorkReminder(ctx(), { terminate: true })).toEqual({ terminate: true });
   });
 });
 
