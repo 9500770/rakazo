@@ -21,7 +21,8 @@ import {
   normalizeHost,
 } from "@rakazo/contracts";
 import { cancelResponseBody } from "@rakazo/core";
-import { Agent } from "undici";
+import type { Dispatcher } from "undici";
+import { Agent, EnvHttpProxyAgent } from "undici";
 import { composioToolBatch } from "./composio-batch.js";
 import { sensitiveQueryParameter } from "./connector-http.js";
 import { combineSignals } from "./connector-safety.js";
@@ -33,6 +34,7 @@ import {
   egressRefused,
   withPinnedDnsLookup,
 } from "./network-address.js";
+import { anyOutboundProxyConfigured, outboundProxyForUrl } from "./outbound-proxy.js";
 import { dispatcherFetch, fetchPairedWithDispatcher } from "./undici-fetch.js";
 
 const MAX_MCP_TOOLS = 250;
@@ -567,7 +569,7 @@ async function inspectSafeRemoteUrl(
   value: string,
   resolve: ResolveHostname,
   policy: RemoteUrlPolicy = {},
-): Promise<{ url: URL; addresses: ResolvedAddress[] }> {
+): Promise<{ url: URL; addresses: ResolvedAddress[]; proxied: boolean }> {
   let url: URL;
   try {
     url = new URL(value);
@@ -593,8 +595,13 @@ async function inspectSafeRemoteUrl(
   }
   const literal = literalAddresses(hostname);
   if (url.protocol === "http:" && isLocalhostOrLoopbackIp(hostname)) {
-    return { url, addresses: literal ?? [] };
+    return { url, addresses: literal ?? [], proxied: false };
   }
+  // A proxied request is tunneled by hostname and the proxy resolves it, so local answers —
+  // poisoned to private addresses on blocked networks — are never dialed and must not refuse
+  // the URL. Direct requests keep resolving and checking locally.
+  const proxied = policy.allowPrivateEndpoint !== true && Boolean(outboundProxyForUrl(url));
+  if (proxied) return { url, addresses: [], proxied: true };
   const addresses = literal ?? (await resolve(hostname));
   try {
     assertAllowedAddresses(addresses, policy);
@@ -604,7 +611,7 @@ async function inspectSafeRemoteUrl(
   if (url.protocol === "http:" && addresses.some((entry) => !isNonPublicAddress(entry.address))) {
     throw new Error("Connector URL must use HTTPS");
   }
-  return { url, addresses };
+  return { url, addresses, proxied: false };
 }
 
 function requestInitWithHost(url: URL, init: RequestInit): RequestInit {
@@ -625,6 +632,9 @@ export function createSafeRemoteFetch(
   policy: RemoteUrlPolicy = {},
 ): SafeRemoteFetch {
   const dispatcher = new Agent({ connect: { lookup: createSafeLookup(resolve, policy) } });
+  // Proxied URLs tunnel by hostname through the env proxy (see inspectSafeRemoteUrl), so
+  // they get a dispatcher that never pins local answers. Direct URLs keep the pinned agent.
+  const proxyDispatcher = anyOutboundProxyConfigured() ? new EnvHttpProxyAgent() : undefined;
   // Injected fetches are not given this Agent; they keep the original hostname
   // for TLS/SNI and pin TCP to the already-validated address through dns.lookup.
   const usePackageFetch = fetchPairedWithDispatcher(baseFetch) === dispatcherFetch;
@@ -632,18 +642,24 @@ export function createSafeRemoteFetch(
     if (typeof input !== "string" && !(input instanceof URL)) {
       throw new Error("Connector fetch requires a URL, not a Request");
     }
-    const { url, addresses } = await inspectSafeRemoteUrl(String(input), resolve, policy);
+    const { url, addresses, proxied } = await inspectSafeRemoteUrl(String(input), resolve, policy);
     let response: Response;
     try {
       const requestInit = { ...init, redirect: "manual" as const };
-      response = usePackageFetch
-        ? await dispatcherFetch(url, {
-            ...requestInit,
-            dispatcher,
-          } as RequestInit & { dispatcher: Agent })
-        : await withPinnedDnsLookup(url.hostname, addresses, () =>
-            baseFetch!(url, requestInitWithHost(url, requestInit)),
-          );
+      response =
+        proxied && proxyDispatcher
+          ? await dispatcherFetch(url, {
+              ...requestInit,
+              dispatcher: proxyDispatcher,
+            } as RequestInit & { dispatcher: Dispatcher })
+          : usePackageFetch
+            ? await dispatcherFetch(url, {
+                ...requestInit,
+                dispatcher,
+              } as RequestInit & { dispatcher: Agent })
+            : await withPinnedDnsLookup(url.hostname, addresses, () =>
+                baseFetch!(url, requestInitWithHost(url, requestInit)),
+              );
     } catch (error) {
       const detail = transportFailureDetail(error);
       throw new Error(`Could not reach ${url.host}${detail ? `: ${detail}` : ""}`, {
@@ -657,7 +673,10 @@ export function createSafeRemoteFetch(
     return response;
   };
   const result = safeFetch as SafeRemoteFetch;
-  result.close = () => dispatcher.close();
+  result.close = async () => {
+    dispatcher.close();
+    proxyDispatcher?.close();
+  };
   return result;
 }
 

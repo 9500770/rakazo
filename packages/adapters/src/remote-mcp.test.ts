@@ -64,6 +64,35 @@ describe("remote MCP URL policy", () => {
     ).resolves.toEqual(new URL("http://host.docker.internal:3927/mcp"));
   });
 
+  it("accepts a proxied connector whose local DNS is poisoned to a private address", async () => {
+    vi.stubEnv("HTTPS_PROXY", "http://proxy.lan:8118");
+    try {
+      const poisoned = async () => [{ address: "31.13.87.9", family: 4 as const }];
+      await expect(assertSafeRemoteUrl("https://api.blocked.test/mcp", poisoned)).resolves.toEqual(
+        new URL("https://api.blocked.test/mcp"),
+      );
+      // The owner escape keeps deciding locally: a proxied env does not loosen it.
+      await expect(
+        assertSafeRemoteUrl("https://10.0.0.8/mcp", poisoned, { allowPrivateEndpoint: true }),
+      ).resolves.toEqual(new URL("https://10.0.0.8/mcp"));
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("keeps checking local answers when NO_PROXY takes the connector", async () => {
+    vi.stubEnv("HTTPS_PROXY", "http://proxy.lan:8118");
+    vi.stubEnv("NO_PROXY", "direct.example.test");
+    try {
+      const poisoned = async () => [{ address: "10.0.0.5", family: 4 as const }];
+      await expect(
+        assertSafeRemoteUrl("https://direct.example.test/mcp", poisoned),
+      ).rejects.toThrow(/private address/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it.each([
     "https://169.254.169.254/latest/meta-data",
     "https://169.254.170.2/latest/meta-data",

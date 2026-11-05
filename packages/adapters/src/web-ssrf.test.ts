@@ -642,30 +642,49 @@ describe("outbound proxy", () => {
     }
   }
 
-  it("tunnels to the checked address and keeps the original host", async () => {
+  it("tunnels by hostname and lets the proxy resolve it", async () => {
     await withConnectProxy(async ({ proxied, hosts, connectHosts }) => {
       const response = await fetchSafeWebText("http://example.test/page", {
         resolveHostname: publicResolver,
       });
 
       expect(response.body).toBe("ok");
-      expect(proxied).toEqual(["203.0.113.10:80"]);
-      expect(connectHosts).toEqual(["203.0.113.10:80"]);
+      expect(proxied).toEqual(["example.test:80"]);
+      expect(connectHosts).toEqual(["example.test"]);
       expect(hosts).toEqual(["example.test"]);
     });
   });
 
-  it("refuses a host that rebinds to a private address before the proxy is asked", async () => {
+  it("still fetches a proxied host whose local DNS is poisoned to a private address", async () => {
     await withConnectProxy(async ({ proxied }) => {
-      let calls = 0;
-      const rebinding = async () => [
-        { address: calls++ === 0 ? "203.0.113.10" : "127.0.0.1", family: 4 as const },
+      const poisoned = async () => [
+        { address: "31.13.87.9", family: 4 as const },
+        { address: "2001::c760:3a69", family: 6 as const },
       ];
 
-      await expect(
-        fetchSafeWebText("http://rebind.example.test/page", { resolveHostname: rebinding }),
-      ).rejects.toThrow();
-      expect(proxied).toEqual([]);
+      const response = await fetchSafeWebText("http://blocked.example.test/page", {
+        resolveHostname: poisoned,
+      });
+      expect(response.body).toBe("ok");
+      expect(proxied).toEqual(["blocked.example.test:80"]);
+    });
+  });
+
+  it("keeps refusing private local answers for hosts the proxy does not take", async () => {
+    await withConnectProxy(async () => {
+      vi.stubEnv("NO_PROXY", "direct.example.test");
+      vi.stubEnv("no_proxy", "direct.example.test");
+      const poisoned = async () => [{ address: "10.0.0.5", family: 4 as const }];
+
+      await expect(assertSafeWebUrl("http://direct.example.test/page", poisoned)).rejects.toThrow(
+        /private address/,
+      );
+    });
+  });
+
+  it("keeps refusing internal host names even when a proxy is configured", async () => {
+    await withConnectProxy(async () => {
+      await expect(assertSafeWebUrl("http://localhost/x", publicResolver)).rejects.toThrow();
     });
   });
 

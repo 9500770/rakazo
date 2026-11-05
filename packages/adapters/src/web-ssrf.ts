@@ -11,6 +11,7 @@ import type { Dispatcher } from "undici";
 import { EnvHttpProxyAgent, Pool } from "undici";
 import type { ResolvedAddress, ResolveHostname } from "./network-address.js";
 import { createAddressCheckedLookup, egressRefused } from "./network-address.js";
+import { anyOutboundProxyConfigured, outboundProxyForUrl } from "./outbound-proxy.js";
 import { fetchPairedWithDispatcher } from "./undici-fetch.js";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -71,7 +72,13 @@ export async function assertSafeWebUrl(
   if (allowedPorts && !allowedPorts.includes(port)) {
     throw new Error("URL port is not allowed");
   }
-  await resolvePublicHost(url.hostname, resolve, signal);
+  if (isBlockedHostname(url.hostname)) {
+    throw egressRefused(url.hostname, new Error("URL targets a private or internal host"));
+  }
+  // A proxied request is tunneled by hostname and the proxy resolves it, so local answers —
+  // poisoned to private addresses on blocked networks — are never used and must not refuse
+  // the URL. Direct requests (no proxy, or NO_PROXY'd) keep the full local address check.
+  if (!outboundProxyForUrl(url)) await resolvePublicHost(url.hostname, resolve, signal);
   return url;
 }
 
@@ -173,13 +180,21 @@ export async function fetchSafeHttpRequest(
 }
 
 /**
- * Honors HTTP(S)_PROXY / NO_PROXY. Every proxied request is tunneled with CONNECT to the checked
- * IP, so the proxy never resolves the hostname itself and DNS rebinding cannot reach past it.
+ * Honors HTTP(S)_PROXY / NO_PROXY. Direct requests connect through the address-checked lookup.
+ * Proxied requests tunnel by hostname and let the proxy resolve it: local DNS may be poisoned
+ * (blocked networks return bogus private answers), and pinning those answers would send the
+ * tunnel to the wrong host. The egress boundary for a proxied request is the operator's proxy.
  */
 function safeWebDispatcher(resolve: ResolveHostname): Dispatcher {
   const { env } = process;
   for (const proxy of [env.http_proxy ?? env.HTTP_PROXY, env.https_proxy ?? env.HTTPS_PROXY]) {
     if (proxy && !/^https?:\/\//i.test(proxy)) throw new Error("Only HTTP proxies are supported");
+  }
+  if (anyOutboundProxyConfigured()) {
+    return new EnvHttpProxyAgent({
+      connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
+      proxyTunnel: true,
+    });
   }
   return new EnvHttpProxyAgent({
     connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
