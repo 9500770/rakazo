@@ -55,34 +55,16 @@ export const STEERING_RESET_MIN_GAP_MS = 60_000;
 export const MID_TURN_PROGRESS_MAX_PER_RUN = 3;
 
 /**
- * Tools that typically take minutes. A conversational turn that starts one
- * without a durable interim is asked to heads-up with message_user first.
+ * Tool note once a conversational run passes the interim wait with nothing posted. It leaves
+ * the call to the model: a turn about to answer should just answer, not post a status first.
  */
-export function isLongWorkTool(name: string): boolean {
-  if (name === "user_computer_policy") return false;
-  return (
-    name === "shell" ||
-    name === "open_path" ||
-    name === "launch_app" ||
-    name.startsWith("computer_") ||
-    name.startsWith("user_computer_") ||
-    name.startsWith("browser_")
-  );
-}
-
-/**
- * Tool note when a conversational run started a long tool with no durable
- * interim. Ask for a brief message_user heads-up; do not tell the model to
- * keep working in silence.
- */
-export const SILENT_LONG_WORK_HEADS_UP_NOTE =
-  "The person has not seen a progress update yet. Call message_user with the plan or current progress before more tool calls.";
+export const SILENT_LONG_WORK_HEADS_UP_NOTE = `This turn has run over ${MID_TURN_PROGRESS_MIN_TURN_AGE_MS / 1000} seconds and the person has seen no update. If more work remains, tell them in a sentence with message_user; if you are done, just reply.`;
 
 /**
  * Whether the run may post another durable interim chat message right now.
  * Short turns stay silent in durable chat; long turns keep a few replyable
- * beats without flooding the thread. The first conversational heads-up bypasses
- * the age wait separately (see canPostLongTaskHeadsUp).
+ * beats without flooding the thread. The first message_user heads-up bypasses
+ * the age wait separately (see canPostFirstHeadsUp).
  */
 export function midTurnProgressBudgetAllows(publishedCount: number, turnAgeMs: number): boolean {
   return (

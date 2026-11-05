@@ -19,8 +19,8 @@ import { isExactNoResponse } from "./silent-reply.js";
 import {
   clampUserProgressMessage,
   extractNarrationText,
-  isLongWorkTool,
   isUserProgressClientNonce,
+  MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
   midTurnProgressBudgetAllows,
   narrationStatusLine,
   SILENT_LONG_WORK_HEADS_UP_NOTE,
@@ -97,11 +97,12 @@ export function canPublishDurableProgress(reply: ReplyState) {
 }
 
 /**
- * The first interim of a conversational turn may acknowledge the plan at once,
- * before a long tool starts. Later beats still wait for the 60s / max-3 budget.
- * Runs nobody is waiting on keep the fresh-turn rule.
+ * The first message_user of a conversational turn may acknowledge the plan at once, before
+ * a long tool starts. Plain narration never takes this path: models write "Let me check"
+ * before almost every tool, so it would post a bubble on every short turn. Later beats still
+ * wait for the 60s / max-3 budget. Runs nobody is waiting on keep the fresh-turn rule.
  */
-export function canPostLongTaskHeadsUp(ctx: RunContext) {
+export function canPostFirstHeadsUp(ctx: RunContext) {
   const { reply } = ctx.state;
   return (
     reply.midTurnProgressCount === 0 &&
@@ -122,27 +123,20 @@ export function nextProgressNonce(ctx: RunContext) {
 }
 
 export function canPublishDurableNarration(ctx: RunContext) {
-  return (
-    runPromotesMidTurnNarration(ctx.run.trigger) &&
-    (canPublishDurableProgress(ctx.state.reply) || canPostLongTaskHeadsUp(ctx))
-  );
+  return runPromotesMidTurnNarration(ctx.run.trigger) && canPublishDurableProgress(ctx.state.reply);
 }
 
 /**
- * Attach a one-shot reminder when a conversational turn started a long tool
- * without any durable interim. Later tools stay quiet so a long computer
- * session is not flooded with the same note.
+ * Attach a one-shot reminder once a conversational turn has run past the interim wait with
+ * nothing posted. Turn age is the signal because a tool's name does not say how long it
+ * runs; later tools stay quiet so a long computer session is not flooded with the same note.
  */
-export function withSilentLongWorkReminder(
-  ctx: RunContext,
-  toolName: string,
-  result: unknown,
-): unknown {
+export function withSilentLongWorkReminder(ctx: RunContext, result: unknown): unknown {
   const { reply } = ctx.state;
   if (
     reply.remindedSilentLongWork ||
-    !isLongWorkTool(toolName) ||
-    !canPostLongTaskHeadsUp(ctx) ||
+    Date.now() - reply.turnStartedAtMs < MID_TURN_PROGRESS_MIN_TURN_AGE_MS ||
+    !canPostFirstHeadsUp(ctx) ||
     ctx.tools.disabled.has("message_user") ||
     typeof result !== "object" ||
     result === null ||
@@ -205,10 +199,9 @@ export async function flushProgress(ctx: RunContext) {
 }
 
 /**
- * Text the bot wrote before a step. It is posted as an interim message when the budget
- * allows and it fits, including the first conversational heads-up before the 60s wait;
- * otherwise it is a note on that step, kept out of the reply. Returns the note so the
- * caller can show it as the working line.
+ * Text the bot wrote before a step. It is posted as an interim message when the budget allows
+ * and it fits; otherwise it is a note on that step, kept out of the reply. Returns the note so
+ * the caller can show it as the working line.
  */
 export async function publishMidTurnNarration(ctx: RunContext, beforeConnectCard = false) {
   const { deps, run } = ctx;

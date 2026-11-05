@@ -70,7 +70,6 @@ export async function applyTool(
   try {
     return withSilentLongWorkReminder(
       ctx,
-      name,
       await dispatchTool(ctx, name, args, executionId, observer),
     );
   } finally {

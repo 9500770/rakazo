@@ -353,7 +353,7 @@ function stepNotes(finalizeRun: Awaited<ReturnType<typeof runTurn>>["finalizeRun
   );
 }
 
-describe.each(["routine", "reaction", "bot_message"])(
+describe.each(["routine", "reaction", "bot_message", "messaging"])(
   "held-back narration on %s runs",
   (trigger) => {
     it("restores the last non-empty narration as a normal final reply", async () => {
@@ -540,58 +540,38 @@ describe("held-back narration on peer requests", () => {
   );
 });
 
-describe("first pre-tool narration on conversational turns", () => {
-  const sentTexts = (messages: Awaited<ReturnType<typeof runTurn>>["messages"]) =>
-    messages.map((message) =>
-      message.blocks.map((block) => ("text" in block ? block.text : "")).join(""),
-    );
-  const finalText = (finalizeRun: Awaited<ReturnType<typeof runTurn>>["finalizeRun"]) =>
-    finalizeRun.mock.calls[0]![0].blocks.filter((block) => block.kind === "text")
+describe("withheld narration on short reply-producing turns", () => {
+  // A short pre-tool note now becomes the working line, so it stays in the reply only when
+  // no final text follows (it used to be kept before a final as well).
+  it.each(["", "Checked: all clear."])("keeps pre-tool text with final %j", async (finalText) => {
+    const { finalizeRun } = await runTurn(finalText, false);
+    const text = finalizeRun.mock.calls[0]![0].blocks.filter((block) => block.kind === "text")
       .map((block) => block.text)
       .join("");
-
-  it("posts the first note as a heads-up before any tool, even on a fresh turn", async () => {
-    const { finalizeRun, messages, prisma } = await runTurn("Checked: all clear.", false);
-    expect(sentTexts(messages)).toEqual(["I will check that."]);
-    expect(
-      (prisma.message.create.mock.calls[0]![0].data as { clientNonce?: string }).clientNonce,
-    ).toMatch(/^user-progress:run-1:0:/);
-    expect(finalText(finalizeRun)).toBe("Checked: all clear.");
-  });
-
-  it("does not add a hollow final when the heads-up was the only text", async () => {
-    const { finalizeRun, messages } = await runTurn("", false);
-    expect(sentTexts(messages)).toEqual(["I will check that."]);
-    expect(finalText(finalizeRun)).toBe("");
-  });
-
-  it("keeps later notes on the 60s budget after that first heads-up", async () => {
-    const { finalizeRun, messages } = await runTurn("", false, ["Paragraph A.", "Paragraph B."]);
-    expect(sentTexts(messages)).toEqual(["Paragraph A."]);
-    expect(finalText(finalizeRun)).toBe("Paragraph B.");
+    expect(text).toBe(finalText || "I will check that.");
   });
 });
 
 describe("text from separate assistant turns", () => {
-  // The first note is posted as a heads-up, so what streams after it is the
+  // The note now leaves the live text for the working line, so what streams after it is the
   // final text alone; the redactor's held-back copy of the note is not streamed again.
   it("streams the break when the redactor holds all pre-tool text", async () => {
     const narration = "I will check that.";
     const finalText = "Checked: all clear.";
-    const { append, messages } = await runTurn(finalText, false, narration, [
+    const { append } = await runTurn(finalText, false, narration, [
       "fake-secret-longer-than-the-entire-reply-for-redactor-buffering",
     ]);
-    expect(
-      messages.map((message) =>
-        message.blocks.map((block) => ("text" in block ? block.text : "")).join(""),
-      ),
-    ).toEqual([narration]);
     const payloads = append.mock.calls
       .map(([event]) => event)
       .filter((event) => event.type === "thread.progress")
       .map((event) => event.payload as { text?: string; delta?: string; reset?: boolean });
-    expect(payloads.some((payload) => payload.reset && payload.text === narration)).toBe(false);
-    expect(payloads.map((payload) => payload.text ?? payload.delta ?? "").join("")).toBe(finalText);
+    const reset = payloads.findIndex((payload) => payload.reset);
+    expect(payloads[reset]).toMatchObject({ text: narration });
+    const after = payloads
+      .slice(reset + 1)
+      .map((payload) => payload.text ?? payload.delta ?? "")
+      .join("");
+    expect(after).toBe(finalText);
   });
 });
 
@@ -609,21 +589,21 @@ describe("notes that can't be posted as messages", () => {
       message.blocks.map((block) => ("text" in block ? block.text : "")).join(""),
     );
 
-  it("posts a fresh turn's first note as a heads-up instead of the working line", async () => {
-    const { finalizeRun, append, messages } = await runTurn("Checked: all clear.", false);
-    expect(sentTexts(messages)).toEqual(["I will check that."]);
+  it("leaves a fresh turn's note out of the reply and shows it as the working line", async () => {
+    const { finalizeRun, append } = await runTurn("Checked: all clear.", false);
     expect(finalText(finalizeRun)).toBe("Checked: all clear.");
     const events = progress(append);
     const tool = events.findIndex((event) => event.type === "agent.tool.called");
-    expect(events[tool + 1]).not.toMatchObject({
-      payload: { reset: true, text: "I will check that." },
+    // The streamed note is replaced by the working line once the step starts.
+    expect(events[tool + 1]).toMatchObject({
+      type: "thread.progress",
+      payload: { reset: true, text: "I will check that.", activity: true },
     });
   });
 
-  it("leaves no extra final when the first note was already the heads-up", async () => {
-    const { finalizeRun, messages } = await runTurn("", false);
-    expect(sentTexts(messages)).toEqual(["I will check that."]);
-    expect(finalText(finalizeRun)).toBe("");
+  it("keeps the last note as the reply when nothing comes after the last step", async () => {
+    const { finalizeRun } = await runTurn("", false);
+    expect(finalText(finalizeRun)).toBe("I will check that.");
   });
 
   it("posts three notes on a long turn and shows the rest only as the working line", async () => {
@@ -646,18 +626,17 @@ describe("notes that can't be posted as messages", () => {
     "Run `npm test` before merging.",
     "Totals:\n- March: 4\n- April: 7",
     "The total is $42.",
-  ])("posts the first short pre-tool note as a heads-up: %j", async (narration) => {
-    const { finalizeRun, append, messages } = await runTurn("Done.", false, narration);
+  ])("keeps text written before a step out of the reply, on that step: %j", async (narration) => {
+    const { finalizeRun, append } = await runTurn("Done.", false, narration);
     expect(finalText(finalizeRun)).toBe("Done.");
-    expect(sentTexts(messages)).toEqual([narration]);
-    expect(stepNotes(finalizeRun)).toEqual([]);
+    expect(stepNotes(finalizeRun)).toEqual([narration]);
     expect(progress(append).some((event) => (event.payload as { reset?: boolean }).reset)).toBe(
-      false,
+      true,
     );
   });
 
-  it("posts an answer written before the last step as the heads-up and replies with what follows it", async () => {
-    const { finalizeRun, messages } = await runTurn("", false, undefined, [], "fyi", {
+  it("keeps an answer written before the last step and replies with what follows it", async () => {
+    const { finalizeRun } = await runTurn("", false, undefined, [], "fyi", {
       runtimeEvents: [
         { type: "text", text: "The meeting is with Anna." },
         { type: "tool", name: "save_event", args: {}, executionId: "call-1" },
@@ -665,18 +644,16 @@ describe("notes that can't be posted as messages", () => {
         { type: "done", text: "" },
       ],
     });
-    expect(sentTexts(messages)).toEqual(["The meeting is with Anna."]);
     expect(finalText(finalizeRun)).toBe("Saved.");
     expect(finalizeRun.mock.calls[0]![0].blocks).toContainEqual({
       kind: "steps",
-      steps: [{ label: "Save event", count: 1 }],
+      steps: [{ label: "Save event", count: 1, note: "The meeting is with Anna." }],
     });
   });
 
-  it("posts the first working-line note and brings later ones back when nothing follows", async () => {
-    const { finalizeRun, messages } = await runTurn("", false, ["Paragraph A.", "Paragraph B."]);
-    expect(sentTexts(messages)).toEqual(["Paragraph A."]);
-    expect(finalText(finalizeRun)).toBe("Paragraph B.");
+  it("brings every working-line note back, in order, when nothing follows the last step", async () => {
+    const { finalizeRun } = await runTurn("", false, ["Paragraph A.", "Paragraph B."]);
+    expect(finalText(finalizeRun)).toBe("Paragraph A.\n\nParagraph B.");
     expect(stepNotes(finalizeRun)).toEqual([]);
   });
 
@@ -707,15 +684,11 @@ describe("notes that can't be posted as messages", () => {
     expect(finalText(finalizeRun)).toBe("Done.");
   });
 
-  it("redacts the first heads-up like the reply", async () => {
-    const { finalizeRun, append, messages } = await runTurn(
-      "Done.",
-      false,
-      "The fake-secret-value is set.",
-      ["fake-secret-value"],
-    );
-    expect(sentTexts(messages)).toEqual(["The [redacted] is set."]);
-    expect(stepNotes(finalizeRun)).toEqual([]);
+  it("redacts notes like the reply", async () => {
+    const { finalizeRun, append } = await runTurn("Done.", false, "The fake-secret-value is set.", [
+      "fake-secret-value",
+    ]);
+    expect(stepNotes(finalizeRun)).toEqual(["The [redacted] is set."]);
     expect(JSON.stringify(append.mock.calls)).not.toContain("fake-secret-value");
   });
 
@@ -736,8 +709,8 @@ describe("notes that can't be posted as messages", () => {
     expect(shown).toContain("[redacted] saved.");
   });
 
-  it("shows tool status lines after the first note is posted as a heads-up", async () => {
-    const { append, messages } = await runTurn("", false, undefined, [], "fyi", {
+  it("keeps tool status lines from replacing the note until the bot writes again", async () => {
+    const { append } = await runTurn("", false, undefined, [], "fyi", {
       runtimeEvents: [
         { type: "text", text: "Checking the totals." },
         { type: "tool", name: "read_file", args: {}, executionId: "call-1" },
@@ -746,11 +719,10 @@ describe("notes that can't be posted as messages", () => {
         { type: "done", text: "Checking the totals.They match." },
       ],
     });
-    expect(sentTexts(messages)).toEqual(["Checking the totals."]);
     const lines = progress(append)
       .filter((event) => event.type === "thread.progress")
       .map((event) => event.payload as { text?: string; activity?: boolean });
-    expect(lines.some((line) => line.text === "Reading totals.csv")).toBe(true);
+    expect(lines.some((line) => line.text === "Reading totals.csv")).toBe(false);
     expect(lines.at(-1)).toMatchObject({ text: "They match." });
   });
 
@@ -895,8 +867,7 @@ describe("text written before a question", () => {
       ],
     });
     expect(sentTexts(messages)).toEqual([
-      "I looked at the level files.",
-      "Three pyramids are left.",
+      "I looked at the level files.\n\nThree pyramids are left.",
     ]);
   });
 
@@ -1034,7 +1005,7 @@ describe("a message from the person while the bot works", () => {
         { type: "done", text: "" },
       ],
     });
-    expect(sentTexts(messages)).toEqual(["Let me answer that.", "Yes, still on it."]);
+    expect(sentTexts(messages)).toEqual(["Yes, still on it."]);
   });
 
   it("keeps a long answer to the person whole on the step that follows it", async () => {
@@ -1063,10 +1034,8 @@ describe("a message from the person while the bot works", () => {
     const statusWriting = new Promise<void>((resolve) => (reached = resolve));
     let holding = true;
     const { messages } = await runTurn("", false, undefined, [], "fyi", {
-      // A prior interim used the first heads-up, so the text before message_user
-      // stays a working line. Hold that write open so the person's message is
-      // handled while message_user is still running.
-      priorProgressText: "Already on it.",
+      // The status line for the text before message_user is held open, so the person's
+      // message is handled while message_user is still running.
       appendGate: (event) => {
         if (!holding || !(event.payload as { reset?: boolean } | undefined)?.reset) return;
         reached();

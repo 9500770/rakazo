@@ -4,14 +4,24 @@ import { NO_RESPONSE } from "./silent-reply.js";
 import { messageUserMaxLength } from "./user-progress.js";
 
 /**
- * Put a known answer in the final reply. Ask only when the goal or scope is
- * still unclear and a wrong guess would change the result.
+ * Put a known answer in the final reply. Ask only when the goal or scope is still unclear and
+ * a wrong guess would change the result. ask_user is a two-to-four option card, so it is named
+ * only for questions that fit one, and only when it is offered.
  */
-export const ANSWER_BEFORE_ASK =
-  "Put a known answer in the final reply. Ask with ask_user only when the goal or scope is unclear and a wrong guess would change the result.";
+function answerBeforeAsk(askUserOffered: boolean): string {
+  const card = askUserOffered ? "; use ask_user when two to four choices fit" : "";
+  return `Put a known answer in the final reply. Ask only when the goal or scope is unclear and a wrong guess would change the result${card}.`;
+}
 
-export function longWorkProgressGuidance(maxLength = messageUserMaxLength()): string {
-  return `${ANSWER_BEFORE_ASK} For work that will take minutes, tell the person what you are doing with message_user before the first tool call. Do not go silent through a long stretch of tool calls. message_user is capped at ${maxLength} characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. Always put the complete final answer in your normal reply.`;
+export const ANSWER_BEFORE_ASK = answerBeforeAsk(true);
+
+const FINAL_ANSWER_IN_REPLY = "Always put the complete final answer in your normal reply.";
+
+export function longWorkProgressGuidance(
+  maxLength = messageUserMaxLength(),
+  askUserOffered = true,
+): string {
+  return `${answerBeforeAsk(askUserOffered)} For work that will take minutes, tell the person what you are doing with message_user before the first tool call, then send at most a few brief updates at real milestones, not one per tool call. Do not go silent through a long stretch of tool calls. Thinking stays private. message_user is capped at ${maxLength} characters and will be silently cut off if you exceed it \u2014 never put your final answer, a report, or any long-form deliverable in it. ${FINAL_ANSWER_IN_REPLY} Never split it across message_user calls or assume an update already delivered it.`;
 }
 
 export const ROUTINE_SILENT_REPLY_GUIDANCE = `If this routine's prompt says to stay silent when there is nothing to report, the entire final assistant reply must be exactly ${NO_RESPONSE} — no surrounding prose, no variants, no progress updates, no all-clear, and no meta note that you are staying silent. Do not call message_user unless you have something to report.`;
@@ -45,10 +55,13 @@ export function replyGuidanceForOfferedTools(
   guidance: string,
   disabled?: ReadonlySet<string>,
 ): string | undefined {
-  if (!disabled?.has("message_user")) return guidance;
   if (guidance === longWorkProgressGuidance()) {
-    return `${ANSWER_BEFORE_ASK} Always put the complete final answer in your normal reply.`;
+    const askUserOffered = !disabled?.has("ask_user");
+    return disabled?.has("message_user")
+      ? `${answerBeforeAsk(askUserOffered)} ${FINAL_ANSWER_IN_REPLY}`
+      : longWorkProgressGuidance(messageUserMaxLength(), askUserOffered);
   }
+  if (!disabled?.has("message_user")) return guidance;
   if (guidance === REACTION_SILENT_REPLY_GUIDANCE) {
     return guidance.replace(", with no message_user call.", ".");
   }

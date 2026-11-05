@@ -9,7 +9,7 @@ import { endCallFromTool, requestUserCall } from "./call-request.js";
 import { handoffToGroupBot } from "./group-handoff.js";
 import { publishMessage } from "./run-messages.js";
 import {
-  canPostLongTaskHeadsUp,
+  canPostFirstHeadsUp,
   canPublishDurableProgress,
   flushProgress,
   nextProgressNonce,
@@ -89,7 +89,7 @@ export const messagingTools: ToolHandlers = {
     await showNarrationStatus(ctx, await publishMidTurnNarration(ctx));
     // A mid-task message handled meanwhile may have granted a new allowance; keep it.
     reply.steeringReplyPending ||= answering;
-    if (!canPublishDurableProgress(reply) && !canPostLongTaskHeadsUp(ctx)) {
+    if (!canPublishDurableProgress(reply) && !canPostFirstHeadsUp(ctx)) {
       return call.finish({
         ok: true,
         note: midTurnProgressBudgetUsed(progressSinceBudgetStart(reply))
