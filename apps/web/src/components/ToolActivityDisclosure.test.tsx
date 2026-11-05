@@ -92,6 +92,15 @@ describe("ToolActivityDisclosure", () => {
     expect(html).toContain('data-live="true"');
   });
 
+  it("names the kind of work the newest step stands for while live", () => {
+    const html = renderToStaticMarkup(
+      <ToolActivityDisclosure live stepCount={2} activityKind="reading">
+        <ToolSteps steps={[{ label: "Web fetch", count: 2 }]} />
+      </ToolActivityDisclosure>,
+    );
+    expect(visibleText(html)).toContain("Looking things up… 2 tools");
+  });
+
   it("starts open while working", () => {
     expect(markup({ live: true, stepCount: 2 })).toMatch(OPEN_TRIGGER);
   });
@@ -227,6 +236,16 @@ describe("ToolOnlyNarration", () => {
     expect(visibleText(html)).toContain("Working… 2 tools");
     expect(html).toMatch(OPEN_TRIGGER);
     expect(html).not.toContain("bg-muted");
+  });
+
+  it("labels a live shell run as computer work", () => {
+    const html = renderToStaticMarkup(
+      <ToolOnlyNarration
+        live
+        blocks={[{ kind: "steps", steps: [{ label: "Shell", count: 3 }] }]}
+      />,
+    );
+    expect(visibleText(html)).toContain("Using its computer… 3 tools");
   });
 
   it("folds each card once the run is done", () => {

@@ -1,7 +1,7 @@
 import { Plural, Trans } from "@lingui/react/macro";
 import { ChatMarkdown } from "@rakazo/chat-ui/web";
 import type { ThreadMessage } from "@rakazo/contracts";
-import { formatCompactDuration } from "@rakazo/core";
+import { formatCompactDuration, toolActivityKind, toolNameFromLabel } from "@rakazo/core";
 import {
   Collapsible,
   CollapsibleContent,
@@ -9,10 +9,42 @@ import {
 } from "@rakazo/ui-web/components/ui/collapsible";
 import { ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
-import { Fragment } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { toolStepCount } from "../lib/tool-activity-view";
 
 type ToolStep = Extract<ThreadMessage["blocks"][number], { kind: "steps" }>["steps"][number];
+type ActivityKind = "reading" | "writing" | "computer" | "working";
+
+/** The kind of work the newest step stands for, so the header names the activity, not the tool. */
+export function stepsActivityKind(steps: readonly ToolStep[]): ActivityKind {
+  const label = steps.at(-1)?.label;
+  return label ? toolActivityKind(toolNameFromLabel(label)) : "working";
+}
+
+function LiveActivityLabel({ kind }: { kind: string }) {
+  switch (kind) {
+    case "reading":
+      return <Trans>Looking things up</Trans>;
+    case "writing":
+      return <Trans>Writing files</Trans>;
+    case "computer":
+      return <Trans>Using its computer</Trans>;
+    default:
+      return <Trans>Working</Trans>;
+  }
+}
+
+/** Re-renders while a run is live so its elapsed time keeps ticking without new events. */
+function useLiveElapsed(live: boolean, startedAt: number | undefined): string | null {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!live || startedAt === undefined) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 15_000);
+    return () => window.clearInterval(timer);
+  }, [live, startedAt]);
+  if (!live || startedAt === undefined) return null;
+  return formatCompactDuration(Math.max(0, now - startedAt));
+}
 
 /** While a run is live, only the most recent steps are listed so a long run does not push the chat down. */
 export const LIVE_TOOL_STEP_WINDOW = 6;
@@ -78,14 +110,20 @@ export function ToolActivityDisclosure({
   live,
   stepCount,
   durationMs,
+  activityKind = "working",
+  startedAt,
   children,
 }: {
   live: boolean;
   stepCount: number;
   durationMs?: number;
+  activityKind?: "reading" | "writing" | "computer" | "working";
+  /** Wall clock of the run's start; while live the header ticks elapsed time from it. */
+  startedAt?: number;
   children: ReactNode;
 }) {
   const duration = formatCompactDuration(durationMs);
+  const liveElapsed = useLiveElapsed(live, startedAt);
   const toolCount = stepCount;
   return (
     <Collapsible
@@ -107,11 +145,23 @@ export function ToolActivityDisclosure({
           className="transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
         />
         <span className="flex items-center gap-2">
-          <span>{live ? <Trans>Working…</Trans> : <Trans>Done</Trans>}</span>
+          <span>
+            {live ? (
+              <>
+                <LiveActivityLabel kind={activityKind} />…
+              </>
+            ) : (
+              <Trans>Done</Trans>
+            )}
+          </span>
           <span>
             <Plural value={toolCount} one="# tool" other="# tools" />
           </span>
-          {!live && duration ? <span>{duration}</span> : null}
+          {live && liveElapsed ? (
+            <span data-testid="tool-activity-elapsed">{liveElapsed}</span>
+          ) : !live && duration ? (
+            <span>{duration}</span>
+          ) : null}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent hiddenUntilFound>
@@ -129,16 +179,24 @@ export function StandaloneToolActivity({
   steps,
   stepCount,
   durationMs,
+  startedAt,
 }: {
   live: boolean;
   steps: readonly ToolStep[];
   stepCount: number;
   durationMs?: number;
+  startedAt?: number;
 }) {
   return (
     <div className="flex justify-start" dir="ltr" data-testid="tool-activity-line">
       <div className="max-w-full min-w-0 ps-1">
-        <ToolActivityDisclosure live={live} stepCount={stepCount} durationMs={durationMs}>
+        <ToolActivityDisclosure
+          live={live}
+          stepCount={stepCount}
+          durationMs={durationMs}
+          activityKind={stepsActivityKind(steps)}
+          startedAt={startedAt}
+        >
           <ToolSteps
             steps={steps}
             currentIndex={live ? steps.length - 1 : undefined}
@@ -154,9 +212,11 @@ export function StandaloneToolActivity({
 export function ToolOnlyNarration({
   blocks,
   live,
+  startedAt,
 }: {
   blocks: readonly ThreadMessage["blocks"][number][];
   live: boolean;
+  startedAt?: number;
 }) {
   return (
     <>
@@ -168,6 +228,7 @@ export function ToolOnlyNarration({
             steps={block.steps}
             stepCount={toolStepCount(block.steps)}
             durationMs={block.durationMs}
+            startedAt={startedAt}
           />
         ) : null,
       )}

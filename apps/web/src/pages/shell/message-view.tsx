@@ -21,6 +21,7 @@ import { SubagentCard } from "../../components/SubagentCard";
 import {
   LIVE_TOOL_STEP_WINDOW,
   StandaloneToolActivity,
+  stepsActivityKind,
   ToolActivityDisclosure,
   ToolOnlyNarration,
   ToolSteps,
@@ -134,6 +135,9 @@ export const MessageView = memo(function MessageView({
       (block) => block.kind === "text" || block.kind === "progress" || block.kind === "steps",
     );
   const isLive = message.id.startsWith("progress:");
+  // The live message is created when the run's first frame arrives: close enough to its start
+  // for the elapsed timer, and available on every surface that renders the live card.
+  const startedAtMs = Date.parse(message.createdAt);
   const quoteMessageId = message.id.includes(":") ? undefined : message.id;
 
   // Only what is drawn names the mentioned bots; copy, quote, and speech keep the original text.
@@ -238,7 +242,11 @@ export const MessageView = memo(function MessageView({
         <>
           {messageContext}
           <div className="relative">
-            <ToolOnlyNarration blocks={visibleNarrationBlocks} live={isLive} />
+            <ToolOnlyNarration
+              blocks={visibleNarrationBlocks}
+              live={isLive}
+              startedAt={startedAtMs}
+            />
             {hoverActions}
           </div>
         </>
@@ -262,6 +270,8 @@ export const MessageView = memo(function MessageView({
                       live={isLive}
                       stepCount={toolStepCount(block.steps)}
                       durationMs={block.durationMs}
+                      activityKind={stepsActivityKind(block.steps)}
+                      startedAt={startedAtMs}
                     >
                       <ToolSteps
                         steps={block.steps}
@@ -326,6 +336,7 @@ export const MessageView = memo(function MessageView({
                 steps={block.steps}
                 stepCount={toolStepCount(block.steps)}
                 durationMs={block.durationMs}
+                startedAt={startedAtMs}
               />
             );
           }

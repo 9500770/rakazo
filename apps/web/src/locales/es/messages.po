@@ -3794,6 +3794,10 @@ msgstr ""
 msgid "Logins"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr "Buscando información"
+
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "Parece contener una clave"
@@ -6834,6 +6838,10 @@ msgstr "Usa rutas de tu ordenador"
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "Usa las credenciales de {hostCredentialSource} propias de este servidor para acceder a {selectedProviderName}."
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr "Usando su ordenador"
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr "Usando tu clave de API"
@@ -7026,6 +7034,7 @@ msgstr "No se hará"
 msgid "Work"
 msgstr "Trabajo"
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "Trabajando"
@@ -7034,7 +7043,6 @@ msgstr "Trabajando"
 msgid "Working instructions"
 msgstr "Instrucciones de trabajo"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7048,6 +7056,10 @@ msgstr "Funciona con tu plan de ChatGPT o Claude."
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr "Espacio de trabajo"
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr "Escribiendo archivos"
 
 #: src/lib/billing.ts
 msgid "year"

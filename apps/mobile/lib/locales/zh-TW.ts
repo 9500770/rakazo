@@ -767,6 +767,9 @@ export const ZH_TW_MESSAGES: Record<string, string> = {
   "Waiting…": "等待中…",
   "What this bot is for": "這個機器人的用途",
   Working: "工作中",
+  "Looking things up…": "查資料…",
+  "Using its computer…": "操作電腦…",
+  "Writing files…": "寫入檔案…",
   "Working…": "處理中…",
   "Work stopped, but the thread could not refresh: {detail}":
     "工作已停止，但無法重新整理對話串：{detail}",

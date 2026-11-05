@@ -3794,6 +3794,10 @@ msgstr ""
 msgid "Logins"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr "조회 중"
+
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "키가 포함된 것 같습니다"
@@ -6834,6 +6838,10 @@ msgstr "내 컴퓨터의 경로를 사용합니다"
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "이 서버의 자체 {hostCredentialSource} 자격 증명으로 {selectedProviderName}에 액세스합니다."
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr "컴퓨터 사용 중"
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr ""
@@ -7026,6 +7034,7 @@ msgstr ""
 msgid "Work"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "작업 중"
@@ -7034,7 +7043,6 @@ msgstr "작업 중"
 msgid "Working instructions"
 msgstr "작업 지침"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7048,6 +7056,10 @@ msgstr "ChatGPT 또는 Claude 요금제로 사용할 수 있습니다."
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr ""
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr "파일 작성 중"
 
 #: src/lib/billing.ts
 msgid "year"

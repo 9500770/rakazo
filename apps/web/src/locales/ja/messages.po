@@ -3794,6 +3794,10 @@ msgstr ""
 msgid "Logins"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr "調べています"
+
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "キーが含まれているようです"
@@ -6834,6 +6838,10 @@ msgstr "お使いのコンピューター上のパスを使用しています"
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "このサーバー自身の{hostCredentialSource}認証情報を使用して{selectedProviderName}にアクセスします。"
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr "パソコンを操作中"
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr "APIキーを使用中"
@@ -7026,6 +7034,7 @@ msgstr "対応しない"
 msgid "Work"
 msgstr "仕事"
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "作業中"
@@ -7034,7 +7043,6 @@ msgstr "作業中"
 msgid "Working instructions"
 msgstr "作業の指示"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7048,6 +7056,10 @@ msgstr "ChatGPT または Claude のプランで使えます。"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr "ワークスペース"
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr "ファイルを書き込み中"
 
 #: src/lib/billing.ts
 msgid "year"

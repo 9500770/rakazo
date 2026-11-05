@@ -67,6 +67,18 @@ export function initialLogoAvatarSignals(botId: string): LogoAvatarSignals {
 /** Exact built-in operations, never guesses from a provider's free-text status. */
 const READING_TOOLS = new Set(["read_file", "web_fetch", "read_history", "skill_read"]);
 const WRITING_TOOLS = new Set(["write_file"]);
+
+/** The kind of work a tool name stands for, shared by the avatar pose and live status text. */
+export type ToolActivityKind = "reading" | "writing" | "computer" | "working";
+
+export function toolActivityKind(toolName: string): ToolActivityKind {
+  // Lowercased so a label round-tripped back to a name ("Read file" → "Read_file") still matches.
+  const name = toolName.toLowerCase();
+  if (COMPUTER_TOOLS.has(name)) return "computer";
+  if (READING_TOOLS.has(name)) return "reading";
+  if (WRITING_TOOLS.has(name)) return "writing";
+  return "working";
+}
 const COMPUTER_TOOLS = new Set([
   "computer_observe",
   "computer_act",
@@ -87,10 +99,7 @@ export function logoAvatarActivity(signals: LogoAvatarSignals): LogoAvatarActivi
   if (isRunWaitingOnUser(signals.status)) return "waiting";
   if (!isRunWorking(signals.status)) return "idle";
   const tool = signals.tools.at(-1)?.name;
-  if (tool && COMPUTER_TOOLS.has(tool)) return "computer";
-  if (tool && READING_TOOLS.has(tool)) return "reading";
-  if (tool && WRITING_TOOLS.has(tool)) return "writing";
-  if (tool) return "working";
+  if (tool) return toolActivityKind(tool);
   if (signals.composing) return "writing";
   if (signals.thinking) return "thinking";
   return "working";

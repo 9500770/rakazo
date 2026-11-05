@@ -28,6 +28,7 @@ import { MessageContextMenu } from "../message-context-menu";
 import { ReplyLine } from "../reply-line";
 import { TimeSeparator } from "../time-separator";
 import { UnreadDivider } from "../unread-divider";
+import { LiveActivityLine } from "./live-activity-line";
 import type { MessageActionProps } from "./message-bubble";
 import { MessageBubble } from "./message-bubble";
 
@@ -454,6 +455,9 @@ export const MessageRow = memo(function MessageRow({
               />
             </ThreadReadOnlyContext.Provider>
           </MessageContextMenu>
+          {message.role === "bot" && message.id.startsWith("progress:") ? (
+            <LiveActivityLine message={message} tokens={tokens} />
+          ) : null}
           {displayedReactions.size > 0 ? (
             <View
               style={{

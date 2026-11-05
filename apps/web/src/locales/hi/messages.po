@@ -3794,6 +3794,10 @@ msgstr ""
 msgid "Logins"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr "जानकारी खोज रहा है"
+
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "लगता है कि इसमें कोई कुंजी है"
@@ -6834,6 +6838,10 @@ msgstr "आपके कंप्यूटर के पाथ इस्ते�
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "{selectedProviderName} तक पहुँचने के लिए इस सर्वर के अपने {hostCredentialSource} क्रेडेंशियल का उपयोग करता है।"
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr "अपने कंप्यूटर का उपयोग कर रहा है"
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr ""
@@ -7026,6 +7034,7 @@ msgstr ""
 msgid "Work"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "काम जारी"
@@ -7034,7 +7043,6 @@ msgstr "काम जारी"
 msgid "Working instructions"
 msgstr "काम के निर्देश"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7048,6 +7056,10 @@ msgstr "आपके ChatGPT या Claude प्लान के साथ क�
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr ""
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr "फ़ाइलें लिख रहा है"
 
 #: src/lib/billing.ts
 msgid "year"

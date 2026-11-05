@@ -4,6 +4,7 @@ import {
   initialLogoAvatarSignals,
   logoAvatarActivity,
   reduceLogoAvatarSignals,
+  toolActivityKind,
 } from "./logo-avatar-activity.js";
 
 function event(
@@ -263,5 +264,15 @@ describe("genuine coarse thinking activity", () => {
         ),
       ),
     ).toBe("idle");
+  });
+});
+
+describe("toolActivityKind", () => {
+  it("classifies a tool name, ignoring the case a step label round-trip leaves behind", () => {
+    expect(toolActivityKind("read_file")).toBe("reading");
+    expect(toolActivityKind("Read_file")).toBe("reading");
+    expect(toolActivityKind("Shell")).toBe("computer");
+    expect(toolActivityKind("write_file")).toBe("writing");
+    expect(toolActivityKind("message_user")).toBe("working");
   });
 });

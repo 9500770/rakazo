@@ -3795,6 +3795,10 @@ msgstr ""
 msgid "Logins"
 msgstr ""
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr "查資料"
+
 #: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "似乎包含金鑰"
@@ -6835,6 +6839,10 @@ msgstr "使用你電腦上的路徑"
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "使用此伺服器自己的 {hostCredentialSource} 憑證存取 {selectedProviderName}。"
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr "操作電腦"
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr "使用你的 API 金鑰"
@@ -7027,6 +7035,7 @@ msgstr "不處理"
 msgid "Work"
 msgstr "工作"
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "工作中"
@@ -7035,7 +7044,6 @@ msgstr "工作中"
 msgid "Working instructions"
 msgstr "工作指示"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7049,6 +7057,10 @@ msgstr "可使用你的 ChatGPT 或 Claude 方案。"
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr "工作空間"
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr "寫入檔案"
 
 #: src/lib/billing.ts
 msgid "year"
