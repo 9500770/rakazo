@@ -122,6 +122,8 @@ export interface ReplyState {
    * assistant turn and needs a break from the earlier text that stayed in this reply.
    */
   assistantTurnBreakPending: boolean;
+  /** A silent long-tool turn was already told to post a heads-up with message_user. */
+  remindedSilentLongWork: boolean;
   /** Replaced whenever a secret is added, so streamed progress hides it too. */
   redactor: ReturnType<typeof createStreamingRedactor>;
 }

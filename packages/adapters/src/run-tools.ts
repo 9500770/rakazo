@@ -3,6 +3,7 @@ import { toolResultTaintsRun } from "@rakazo/core";
 import { isTerminatingReplyResult } from "./approval-effect.js";
 import { IMAGE_RETURNING_COMPUTER_TOOLS, MODEL_CANNOT_SEE_MESSAGE } from "./model-vision.js";
 import type { RunContext } from "./run-context.js";
+import { withSilentLongWorkReminder } from "./run-progress.js";
 import type { ToolHandler } from "./run-tool-gate.js";
 import { auditToolCall, gateToolCall } from "./run-tool-gate.js";
 import { prepareToolRequest, resolveToolRequest } from "./run-tool-request.js";
@@ -67,7 +68,11 @@ export async function applyTool(
   observer?: AgentToolExecutionObserver,
 ) {
   try {
-    return await dispatchTool(ctx, name, args, executionId, observer);
+    return withSilentLongWorkReminder(
+      ctx,
+      name,
+      await dispatchTool(ctx, name, args, executionId, observer),
+    );
   } finally {
     // Editing its own profile returns only what this run wrote; a child's profile is another bot's.
     const ownProfile = name === "update_bot" && !argumentGiven(args.bot_id);

@@ -55,6 +55,30 @@ export const STEERING_RESET_MIN_GAP_MS = 60_000;
 export const MID_TURN_PROGRESS_MAX_PER_RUN = 3;
 
 /**
+ * Tools that typically take minutes. A conversational turn that starts one
+ * without a durable interim is asked to heads-up with message_user first.
+ */
+export function isLongWorkTool(name: string): boolean {
+  if (name === "user_computer_policy") return false;
+  return (
+    name === "shell" ||
+    name === "open_path" ||
+    name === "launch_app" ||
+    name.startsWith("computer_") ||
+    name.startsWith("user_computer_") ||
+    name.startsWith("browser_")
+  );
+}
+
+/**
+ * Tool note when a conversational run started a long tool with no durable
+ * interim. Ask for a brief message_user heads-up; do not tell the model to
+ * keep working in silence.
+ */
+export const SILENT_LONG_WORK_HEADS_UP_NOTE =
+  "The person has not seen a progress update yet. Call message_user with the plan or current progress before more tool calls.";
+
+/**
  * Whether the run may post another durable interim chat message right now.
  * Short turns stay silent in durable chat; long turns keep a few replyable
  * beats without flooding the thread. The first conversational heads-up bypasses
