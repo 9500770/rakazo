@@ -2,7 +2,11 @@ import type { MessageBlock } from "@rakazo/contracts";
 import { isToolActivityBlock } from "@rakazo/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { builtinAgentTools } from "./builtin-tools.js";
-import { canPostLongTaskHeadsUp } from "./run-progress.js";
+import {
+  canPostLongTaskHeadsUp,
+  canPublishDurableNarration,
+  withSilentLongWorkReminder,
+} from "./run-progress.js";
 import { ANSWER_BEFORE_ASK, longWorkProgressGuidance } from "./run-replies.js";
 import {
   assistantTurnSeparator,
@@ -10,6 +14,7 @@ import {
   clampUserProgressMessage,
   extractNarrationText,
   finalBlocksAfterMidTurnProgress,
+  isLongWorkTool,
   isProgressMessageTruncated,
   isUserProgressClientNonce,
   MID_TURN_PROGRESS_BUDGET_USED_NOTE,
@@ -21,6 +26,7 @@ import {
   midTurnProgressTooSoonNote,
   NARRATION_STATUS_MAX_LENGTH,
   narrationStatusLine,
+  SILENT_LONG_WORK_HEADS_UP_NOTE,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
   userProgressClientNonce,
 } from "./user-progress.js";
@@ -145,6 +151,119 @@ describe("canPostLongTaskHeadsUp", () => {
     for (const trigger of ["routine", "webhook", "reaction", "bot_message"]) {
       expect(canPostLongTaskHeadsUp(ctx(trigger))).toBe(false);
     }
+  });
+});
+
+describe("canPublishDurableNarration", () => {
+  const ctx = (
+    trigger: string,
+    options: { count?: number; turnAgeMs?: number; steering?: boolean } = {},
+  ) =>
+    ({
+      run: { trigger },
+      state: {
+        reply: {
+          midTurnProgressCount: options.count ?? 0,
+          progressBudgetStart: 0,
+          turnStartedAtMs: Date.now() - (options.turnAgeMs ?? 0),
+          steeringReplyPending: options.steering ?? false,
+        },
+      },
+    }) as never;
+
+  it("promotes the first conversational narration before any tool", () => {
+    expect(canPublishDurableNarration(ctx("user"))).toBe(true);
+    expect(canPublishDurableNarration(ctx("messaging"))).toBe(true);
+  });
+
+  it("keeps later narration on the 60s / max-3 budget", () => {
+    expect(canPublishDurableNarration(ctx("user", { count: 1 }))).toBe(false);
+    expect(
+      canPublishDurableNarration(
+        ctx("user", { count: 1, turnAgeMs: MID_TURN_PROGRESS_MIN_TURN_AGE_MS }),
+      ),
+    ).toBe(true);
+    expect(
+      canPublishDurableNarration(
+        ctx("user", {
+          count: MID_TURN_PROGRESS_MAX_PER_RUN,
+          turnAgeMs: MID_TURN_PROGRESS_MIN_TURN_AGE_MS,
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not promote the first beat on silent or held-back runs", () => {
+    for (const trigger of ["routine", "webhook", "reaction", "bot_message"]) {
+      expect(canPublishDurableNarration(ctx(trigger))).toBe(false);
+    }
+  });
+});
+
+describe("silent long-work reminder", () => {
+  const ctx = (options: {
+    trigger?: string;
+    count?: number;
+    reminded?: boolean;
+    disabled?: string[];
+  }) =>
+    ({
+      run: { trigger: options.trigger ?? "user" },
+      state: {
+        reply: {
+          midTurnProgressCount: options.count ?? 0,
+          remindedSilentLongWork: options.reminded ?? false,
+        },
+      },
+      tools: { disabled: new Set(options.disabled ?? []) },
+    }) as never;
+
+  it("names the tools that should nudge a silent conversational turn", () => {
+    expect(isLongWorkTool("computer_act")).toBe(true);
+    expect(isLongWorkTool("computer_observe")).toBe(true);
+    expect(isLongWorkTool("shell")).toBe(true);
+    expect(isLongWorkTool("browser_act")).toBe(true);
+    expect(isLongWorkTool("user_computer_shell")).toBe(true);
+    expect(isLongWorkTool("read_file")).toBe(false);
+    expect(isLongWorkTool("web_search")).toBe(false);
+    expect(isLongWorkTool("message_user")).toBe(false);
+    expect(isLongWorkTool("user_computer_policy")).toBe(false);
+  });
+
+  it("asks for a message_user heads-up instead of more silent work", () => {
+    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toContain("message_user");
+    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).toMatch(/plan|progress/);
+    expect(SILENT_LONG_WORK_HEADS_UP_NOTE).not.toMatch(/Keep working/i);
+  });
+
+  it("attaches the note once on the first silent long tool", () => {
+    const reply = { midTurnProgressCount: 0, remindedSilentLongWork: false };
+    const first = {
+      run: { trigger: "user" },
+      state: { reply },
+      tools: { disabled: new Set() },
+    } as never;
+    expect(withSilentLongWorkReminder(first, "computer_act", { ok: true })).toEqual({
+      ok: true,
+      note: SILENT_LONG_WORK_HEADS_UP_NOTE,
+    });
+    expect(reply.remindedSilentLongWork).toBe(true);
+    expect(withSilentLongWorkReminder(first, "shell", { stdout: "" })).toEqual({ stdout: "" });
+  });
+
+  it("leaves short tools and later interims alone", () => {
+    expect(withSilentLongWorkReminder(ctx({}), "read_file", { text: "hi" })).toEqual({
+      text: "hi",
+    });
+    expect(withSilentLongWorkReminder(ctx({ count: 1 }), "computer_act", { ok: true })).toEqual({
+      ok: true,
+    });
+    expect(withSilentLongWorkReminder(ctx({ trigger: "routine" }), "shell", { ok: true })).toEqual({
+      ok: true,
+    });
+    expect(
+      withSilentLongWorkReminder(ctx({ disabled: ["message_user"] }), "shell", { ok: true }),
+    ).toEqual({ ok: true });
   });
 });
 

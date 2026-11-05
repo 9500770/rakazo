@@ -19,9 +19,11 @@ import { isExactNoResponse } from "./silent-reply.js";
 import {
   clampUserProgressMessage,
   extractNarrationText,
+  isLongWorkTool,
   isUserProgressClientNonce,
   midTurnProgressBudgetAllows,
   narrationStatusLine,
+  SILENT_LONG_WORK_HEADS_UP_NOTE,
   USER_PROGRESS_MESSAGE_MAX_LENGTH,
   userProgressClientNonce,
 } from "./user-progress.js";
@@ -58,6 +60,7 @@ export async function createReplyState(
     lastProgressAt: 0,
     hasStreamedText: false,
     assistantTurnBreakPending: false,
+    remindedSilentLongWork: false,
     redactor: createStreamingRedactor(secrets),
   };
   const priorProgress = await deps.prisma.message.findMany({
@@ -119,7 +122,41 @@ export function nextProgressNonce(ctx: RunContext) {
 }
 
 export function canPublishDurableNarration(ctx: RunContext) {
-  return runPromotesMidTurnNarration(ctx.run.trigger) && canPublishDurableProgress(ctx.state.reply);
+  return (
+    runPromotesMidTurnNarration(ctx.run.trigger) &&
+    (canPublishDurableProgress(ctx.state.reply) || canPostLongTaskHeadsUp(ctx))
+  );
+}
+
+/**
+ * Attach a one-shot reminder when a conversational turn started a long tool
+ * without any durable interim. Later tools stay quiet so a long computer
+ * session is not flooded with the same note.
+ */
+export function withSilentLongWorkReminder(
+  ctx: RunContext,
+  toolName: string,
+  result: unknown,
+): unknown {
+  const { reply } = ctx.state;
+  if (
+    reply.remindedSilentLongWork ||
+    !isLongWorkTool(toolName) ||
+    !canPostLongTaskHeadsUp(ctx) ||
+    ctx.tools.disabled.has("message_user") ||
+    typeof result !== "object" ||
+    result === null ||
+    Array.isArray(result) ||
+    (result as { terminate?: unknown }).terminate === true
+  ) {
+    return result;
+  }
+  reply.remindedSilentLongWork = true;
+  const record = result as { note?: unknown };
+  if (typeof record.note === "string" && record.note.trim()) {
+    return { ...record, note: `${record.note}\n${SILENT_LONG_WORK_HEADS_UP_NOTE}` };
+  }
+  return { ...record, note: SILENT_LONG_WORK_HEADS_UP_NOTE };
 }
 
 export function flushPendingTools(reply: ReplyState) {
@@ -168,9 +205,10 @@ export async function flushProgress(ctx: RunContext) {
 }
 
 /**
- * Text the bot wrote before a step. It is posted as an interim message when the budget allows
- * and it fits; otherwise it is a note on that step, kept out of the reply. Returns the note so
- * the caller can show it as the working line.
+ * Text the bot wrote before a step. It is posted as an interim message when the budget
+ * allows and it fits, including the first conversational heads-up before the 60s wait;
+ * otherwise it is a note on that step, kept out of the reply. Returns the note so the
+ * caller can show it as the working line.
  */
 export async function publishMidTurnNarration(ctx: RunContext, beforeConnectCard = false) {
   const { deps, run } = ctx;
