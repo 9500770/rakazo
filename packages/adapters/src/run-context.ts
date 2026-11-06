@@ -8,7 +8,7 @@ import type {
   SemanticMemoryProvider,
   WebProvider,
 } from "@rakazo/adapter-kit";
-import type { ComputerMode, MessageBlock } from "@rakazo/contracts";
+import type { ComputerMode, MessageBlock, ReplyMode } from "@rakazo/contracts";
 import { createStreamingRedactor } from "@rakazo/core";
 import { toolEffectIdempotencyKey } from "@rakazo/core/node/approval-effect-key";
 import type { Bot, Computer, effectiveMemoryScope, Run, Task, Thread } from "@rakazo/db";
@@ -215,6 +215,8 @@ export interface RunComputerContext {
   lazy: ReturnType<typeof lazyRunComputer>;
   /** Starts the computer on first use and copies the turn's files before each tool. */
   get: (reason: "tool" | "takeover" | "script", tool?: string) => Promise<ComputerRef>;
+  /** Queue files from earlier messages; `get` copies them before the next computer tool. */
+  copyEarlierFiles: (files: Array<Extract<MessageBlock, { kind: "file" | "image" }>>) => void;
   checkpoint: ReturnType<typeof createRunWorkspaceCheckpoint>;
   hostEnvironment: Awaited<ReturnType<NonNullable<SandboxProvider["environment"]>>> | undefined;
   graphical: boolean;
@@ -279,6 +281,8 @@ export interface RunContext {
   /** Provider context for this run's calls; aborting the run aborts its signal. */
   context: AdapterContext;
   abortController: AbortController;
+  /** Stops the model and its next tool calls; the run's own signal stays live to save and finish. */
+  runtimeAbortController: AbortController;
   fleetRun: FleetRun;
   /** Every value redacted from what this run shows or stores. Grows during the run. */
   secrets: string[];
@@ -293,7 +297,11 @@ export interface RunContext {
   scripted: boolean;
   script: ReturnType<typeof inferScript> | undefined;
   allowSilentEmptyRun: boolean;
+  /** A group message that named no member: this member may end without replying. */
+  groupReplyOptional: boolean;
   emptyResponseText: string | undefined;
+  /** Messages mode keeps working text on the steps; only message_user and the final answer reach chat. */
+  replyMode: ReplyMode;
   state: RunState;
   settleRunningHelpers: () => Promise<void>;
   stopHeartbeatAfterCompletion: () => void;
@@ -438,6 +446,7 @@ export function restoreTurnCheckpointEffects(
   ctx: RunContext,
   turnCheckpoint: string,
   model: { provider: string; id: string },
+  computerMode?: "main" | "computer",
 ): string | undefined {
   const effects = ctx.state.effects;
   try {
@@ -445,6 +454,18 @@ export function restoreTurnCheckpointEffects(
     const unresolved = new Set(unresolvedTurnCheckpointCalls(saved.messages));
     const namedTools = namedAgentTools(partitionTools(ctx.tools.offered).listed);
     const available = new Set(namedTools.map((tool) => tool.name));
+    if (computerMode) {
+      // Only the authenticated saved role authorizes a runtime transition. Do not
+      // add it to the executor's tool table or mask a connector wire-name collision.
+      if (
+        saved.computerMode?.version !== 1 ||
+        saved.computerMode.mode !== computerMode ||
+        available.has("enter_computer_mode") ||
+        available.has("leave_computer_mode")
+      )
+        return undefined;
+      available.add(computerMode === "main" ? "enter_computer_mode" : "leave_computer_mode");
+    }
     if (
       saved.messages.some(
         (message) =>

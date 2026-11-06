@@ -36,7 +36,11 @@ import {
   reduceComputerStatus,
   reduceThreadSnapshot,
 } from "../../lib/thread-events";
-import { transcriptCanSnapAfterFrame, transcriptIsNearEnd } from "../../lib/transcript-scroll";
+import {
+  firstVisibleTranscriptRow,
+  transcriptCanSnapAfterFrame,
+  transcriptIsNearEnd,
+} from "../../lib/transcript-scroll";
 import type { useBrowserNotifications } from "./use-browser-notifications";
 import type { ComputerState } from "./use-computer";
 import type { ThreadState } from "./use-thread-state";
@@ -274,6 +278,10 @@ export function useThreadSync({
       return;
     pinnedAroundRef.current = null;
     const scrollElement = messageScroll.current;
+    // Hold the first visible row steady: a plain height delta would also count
+    // content appended at the bottom while the older page was loading.
+    const anchorRow = firstVisibleTranscriptRow(scrollElement);
+    const anchorTop = anchorRow?.offsetTop ?? null;
     const previousHeight = scrollElement?.scrollHeight ?? 0;
     const epoch = historyEpoch.current;
     const before = snapshot.olderCursor;
@@ -293,7 +301,11 @@ export function useThreadSync({
       updateSnapshot((prev) => prependThreadMessagePage(prev, page));
       window.requestAnimationFrame(() => {
         const element = messageScroll.current;
-        if (element) element.scrollTop += element.scrollHeight - previousHeight;
+        if (!element) return;
+        element.scrollTop +=
+          anchorRow?.isConnected && anchorTop !== null
+            ? anchorRow.offsetTop - anchorTop
+            : element.scrollHeight - previousHeight;
       });
     } finally {
       setLoadingOlder(false);
@@ -367,7 +379,7 @@ export function useThreadSync({
           true,
           currentBot?.name ?? active.name,
           currentBot?.notifyOnFinish ?? false,
-          false,
+          undefined,
         );
         if (event.type === "thread.cleared") resetHistory();
         if (event.type === "bot.archived") {
@@ -399,6 +411,10 @@ export function useThreadSync({
           // waiting_input: reconcile ask cards if a stale post-send refresh raced SSE.
           void snapshotRefresh.invalidate().catch(() => undefined);
         } else if (isComputerStatusEvent(event)) {
+          // In a shared Space the event does not say who took control; the snapshot does.
+          if (event.type === "computer.takeover.granted" && computerRef.current?.shared) {
+            void snapshotRefresh.invalidate().catch(() => undefined);
+          }
           void refreshComputerScreen(active.id).catch(() => undefined);
         }
         if (isRunTerminalEvent(event)) refreshRoutineHistory(event.runId);
@@ -463,7 +479,7 @@ export function useThreadSync({
           true,
           eventBot?.name ?? activeGroup.name,
           true,
-          true,
+          groupId,
         );
         if (event.type === "thread.message.created" && event.payload.role === "bot") {
           markGroupReadOnReply(groupId);

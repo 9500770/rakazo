@@ -482,13 +482,15 @@ describe("userComputerShell device selection", () => {
   it("keeps the single-device message when nothing is online, named or not", async () => {
     const offline = setupDevices([]);
     expect(await userComputerShell(offline.ctx, offline.call({ command: "ls" }))).toEqual({
-      error: "The user's computer is not connected. Ask them to open the Rakazo desktop app.",
+      error:
+        'The user\'s computer is not connected. If the task needs it, ask them to open the Rakazo desktop app and turn on "Let bots use this computer" in its settings.',
     });
     const named = setupDevices([]);
     expect(
       await userComputerShell(named.ctx, named.call({ command: "ls", computer: "desk-pc-0001" })),
     ).toEqual({
-      error: "The user's computer is not connected. Ask them to open the Rakazo desktop app.",
+      error:
+        'The user\'s computer is not connected. If the task needs it, ask them to open the Rakazo desktop app and turn on "Let bots use this computer" in its settings.',
     });
     expect(offline.requests).toEqual([]);
   });

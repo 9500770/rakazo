@@ -15,7 +15,9 @@ import type { ExecutorDeps } from "./executor-deps.js";
 import type { ReplyState, RunContext } from "./run-context.js";
 import { publishMessage } from "./run-messages.js";
 import { runAllowsSilentEmpty, runPromotesMidTurnNarration } from "./run-replies.js";
-import { isExactNoResponse } from "./silent-reply.js";
+import { PAGE_BROWSER_TOOL_NAMES } from "./run-tool-selection.js";
+import { couldBecomeNoResponse, isExactNoResponse, isPlaceholderText } from "./silent-reply.js";
+import { USER_COMPUTER_SCREEN_TOOLS } from "./user-computer-tools.js";
 import {
   clampUserProgressMessage,
   extractNarrationText,
@@ -129,8 +131,13 @@ export function nextProgressNonce(ctx: RunContext) {
   return userProgressClientNonce(ctx.run.id, reply.midTurnProgressCount++);
 }
 
+/** Whether text written before a step may be posted as an interim message at all. */
+export function narrationBecomesMessages(ctx: RunContext) {
+  return ctx.replyMode === "chat" && runPromotesMidTurnNarration(ctx.run.trigger);
+}
+
 export function canPublishDurableNarration(ctx: RunContext) {
-  return runPromotesMidTurnNarration(ctx.run.trigger) && canPublishDurableProgress(ctx.state.reply);
+  return narrationBecomesMessages(ctx) && canPublishDurableProgress(ctx.state.reply);
 }
 
 /**
@@ -184,6 +191,21 @@ export function tryFlushPendingTools(reply: ReplyState) {
     flushPendingTools(reply);
 }
 
+/**
+ * A member a group message named nobody for may answer with the silence sentinel, so what it
+ * has written stays unseen while that is still possible. Once the text turns into a reply it
+ * all shows.
+ */
+export function progressHeldForSilence(ctx: RunContext) {
+  const { reply } = ctx.state;
+  return !reply.hasStreamedText && mayBeSilentEnding(ctx, reply.pendingProgress);
+}
+
+/** Text a member a group message named nobody for may still turn into its silent ending. */
+export function mayBeSilentEnding(ctx: Pick<RunContext, "groupReplyOptional">, text: string) {
+  return ctx.groupReplyOptional && (couldBecomeNoResponse(text) || isPlaceholderText(text));
+}
+
 export async function flushProgress(ctx: RunContext) {
   const { deps, run, runId, bot, thread } = ctx;
   const { reply } = ctx.state;
@@ -193,7 +215,8 @@ export async function flushProgress(ctx: RunContext) {
     ctx.scripted ||
     !reply.pendingProgress ||
     run.trigger === "routine" ||
-    isBackgroundRunTrigger(run.trigger)
+    isBackgroundRunTrigger(run.trigger) ||
+    progressHeldForSilence(ctx)
   )
     return;
   await deps.events.append({
@@ -235,7 +258,7 @@ export async function publishMidTurnNarration(ctx: RunContext, beforeConnectCard
   const promotes = runPromotesMidTurnNarration(run.trigger);
   if (
     text.length <= USER_PROGRESS_MESSAGE_MAX_LENGTH &&
-    (canPublishDurableNarration(ctx) || (beforeConnectCard && promotes))
+    (canPublishDurableNarration(ctx) || (beforeConnectCard && narrationBecomesMessages(ctx)))
   ) {
     reply.workingNotes.length = 0;
     reply.narrationStatusShowing = false;
@@ -273,11 +296,11 @@ export async function publishNarrationBeforeAsk(ctx: RunContext) {
   const extracted = extractNarrationText(reply.messageSegments, reply.currentTextSegment);
   const pending = redactSecretsAfter(reply.narrationSoFar, extracted.text, ctx.secrets).trim();
   reply.narrationSoFar += extracted.text;
+  // Messages mode shows only the latest text, as at the end of a turn.
+  const held =
+    ctx.replyMode === "chat" ? reply.workingNotes : pending ? [] : reply.workingNotes.slice(-1);
   // Held notes were redacted against the secrets known when they were held; check them again.
-  const text = redactSecrets(
-    [...reply.workingNotes, pending].filter(Boolean).join("\n\n"),
-    ctx.secrets,
-  );
+  const text = redactSecrets([...held, pending].filter(Boolean).join("\n\n"), ctx.secrets);
   if (!text) return;
   reply.messageSegments = extracted.remaining;
   reply.currentTextSegment = "";

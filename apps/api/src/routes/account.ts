@@ -117,7 +117,7 @@ export function accountRoutes(ctx: RouterContext) {
         return billing.status(context.actor);
       }),
       checkout: authed.billing.checkout.handler(async ({ context, input }) =>
-        requireBilling(deps).checkout(context.actor, input?.client, input?.interval),
+        requireBilling(deps).checkout(context.actor, input?.client, input?.interval, input?.tier),
       ),
       portal: authed.billing.portal.handler(async ({ context, input }) =>
         requireBilling(deps).portal(context.actor, input?.client),
@@ -130,6 +130,11 @@ export function accountRoutes(ctx: RouterContext) {
       switchToYearly: authed.billing.switchToYearly.handler(async ({ context }) => {
         const billing = requireBilling(deps);
         await billing.switchToYearly(context.actor);
+        return billing.status(context.actor);
+      }),
+      changeTier: authed.billing.changeTier.handler(async ({ context, input }) => {
+        const billing = requireBilling(deps);
+        await billing.changeTier(context.actor, input.tier);
         return billing.status(context.actor);
       }),
       claimReferral: authed.billing.claimReferral.handler(async ({ context, input }) => {
@@ -202,6 +207,9 @@ export function accountRoutes(ctx: RouterContext) {
                 emitBotUpdated: true,
                 // Pinned since it was listed: leave the owner's choice alone.
                 expectedSettings: { avatarSetPinned: false },
+                // Re-read under lock inside the transaction: a newer save of the
+                // default that lands while this writes owns the bot instead.
+                expectedUserAvatarSet: { userId, botAvatarSet },
                 data: { avatarSet: botAvatarSet },
               }),
             ).catch((error) => {

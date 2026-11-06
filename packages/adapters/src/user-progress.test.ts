@@ -181,6 +181,7 @@ describe("canPublishDurableNarration", () => {
   ) =>
     ({
       run: { trigger },
+      replyMode: "chat",
       state: {
         reply: {
           midTurnProgressCount: options.count ?? 0,

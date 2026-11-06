@@ -92,6 +92,7 @@ export * from "./home-object-store.js";
 export { HonchoMemoryProvider } from "./honcho-memory-provider.js";
 export * from "./host-aware-sandbox.js";
 export * from "./http-decisions.js";
+export * from "./inbound-email.js";
 export * from "./incus-sandbox.js";
 export * from "./infisical-secret-store.js";
 export * from "./installed-connectors.js";
@@ -112,6 +113,7 @@ export * from "./mcp-server-tool.js";
 export * from "./mcp-transport.js";
 export * from "./media-generation-factory.js";
 export * from "./media-generation-provider.js";
+export * from "./media-video-poll.js";
 export {
   AGENT_MEMORY_MAX_BYTES,
   buildAgentMemoryPrompt,
@@ -168,6 +170,7 @@ export * from "./realtime.js";
 export * from "./release-watch.js";
 export * from "./remote-mcp.js";
 export * from "./resend-email.js";
+export { finishRoutineHandover } from "./routine-handover.js";
 export * from "./routine-watch.js";
 export * from "./run-secret.js";
 export * from "./run-wakeup.js";
