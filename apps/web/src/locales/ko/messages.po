@@ -229,6 +229,10 @@ msgstr "{label}, 비어 있음"
 msgid "{minutes}m ago"
 msgstr "{minutes}분 전"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "{missingCalls, plural, one {# call ended before the provider reported usage; totals are approximate.} other {# calls ended before the provider reported usage; totals are approximate.}}"
+msgstr ""
+
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "{name} (same name as a built-in skill)"
 msgstr "{name}(기본 제공 스킬과 같은 이름)"
@@ -4219,7 +4223,6 @@ msgid "Looking things up"
 msgstr "조회 중"
 
 #: src/pages/shell/agent-import-plan.tsx
-#: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "키가 포함된 것 같습니다"
 

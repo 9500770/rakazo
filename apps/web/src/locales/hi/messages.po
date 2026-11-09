@@ -229,6 +229,10 @@ msgstr "{label}, खाली"
 msgid "{minutes}m ago"
 msgstr "{minutes} मिनट पहले"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "{missingCalls, plural, one {# call ended before the provider reported usage; totals are approximate.} other {# calls ended before the provider reported usage; totals are approximate.}}"
+msgstr ""
+
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "{name} (same name as a built-in skill)"
 msgstr "{name} (बिल्ट-इन स्किल जैसा ही नाम)"
@@ -4219,7 +4223,6 @@ msgid "Looking things up"
 msgstr "जानकारी खोज रहा है"
 
 #: src/pages/shell/agent-import-plan.tsx
-#: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "लगता है कि इसमें कोई कुंजी है"
 

@@ -229,6 +229,10 @@ msgstr "{label}, puste"
 msgid "{minutes}m ago"
 msgstr "{minutes} min temu"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "{missingCalls, plural, one {# call ended before the provider reported usage; totals are approximate.} other {# calls ended before the provider reported usage; totals are approximate.}}"
+msgstr ""
+
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "{name} (same name as a built-in skill)"
 msgstr "{name} (ta sama nazwa co wbudowana umiejętność)"
@@ -4214,6 +4218,10 @@ msgstr "Loginy"
 msgid "Logins and keys your bots can use."
 msgstr "Loginy i klucze, z których mogą korzystać boty."
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Looking things up"
+msgstr ""
+
 #: src/pages/shell/agent-import-plan.tsx
 msgid "Looks like it contains a key"
 msgstr "Wygląda na to, że zawiera klucz"
@@ -7514,6 +7522,10 @@ msgstr "Używa ścieżek na Twoim komputerze"
 msgid "Uses this server's own {hostCredentialSource} credentials to access {selectedProviderName}."
 msgstr "Używa własnych danych uwierzytelniających {hostCredentialSource} tego serwera, aby uzyskać dostęp do {selectedProviderName}."
 
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Using its computer"
+msgstr ""
+
 #: src/components/ModelCredits.tsx
 msgid "Using your API key"
 msgstr "Korzystasz z własnego klucza API"
@@ -7741,6 +7753,7 @@ msgstr "Nie będzie robione"
 msgid "Work"
 msgstr "Praca"
 
+#: src/components/ToolActivityDisclosure.tsx
 #: src/pages/ActivityList.tsx
 msgid "Working"
 msgstr "Pracuje"
@@ -7749,7 +7762,6 @@ msgstr "Pracuje"
 msgid "Working instructions"
 msgstr "Instrukcje pracy"
 
-#: src/components/ToolActivityDisclosure.tsx
 #: src/lib/roster-status.ts
 #: src/pages/Auth.tsx
 #: src/pages/shell/transcript.tsx
@@ -7767,6 +7779,10 @@ msgstr "Działa z Twoim planem ChatGPT lub Claude."
 #: src/pages/memory-providers/HonchoSettingsForm.tsx
 msgid "Workspace"
 msgstr "Obszar roboczy"
+
+#: src/components/ToolActivityDisclosure.tsx
+msgid "Writing files"
+msgstr ""
 
 #: src/lib/billing.ts
 msgid "year"

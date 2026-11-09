@@ -230,6 +230,10 @@ msgstr "{label}，空白"
 msgid "{minutes}m ago"
 msgstr "{minutes} 分鐘前"
 
+#: src/pages/AccountSettingsOverlay.tsx
+msgid "{missingCalls, plural, one {# call ended before the provider reported usage; totals are approximate.} other {# calls ended before the provider reported usage; totals are approximate.}}"
+msgstr ""
+
 #: src/components/integrations/plugin-marketplace.tsx
 msgid "{name} (same name as a built-in skill)"
 msgstr "{name}（與內建技能同名）"
@@ -4220,7 +4224,6 @@ msgid "Looking things up"
 msgstr "查資料"
 
 #: src/pages/shell/agent-import-plan.tsx
-#: src/pages/shell/agent-import.tsx
 msgid "Looks like it contains a key"
 msgstr "似乎包含金鑰"
 
