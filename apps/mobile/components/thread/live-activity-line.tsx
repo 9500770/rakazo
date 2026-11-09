@@ -2,8 +2,8 @@ import { formatCompactDuration, toolActivityKind, toolNameFromLabel } from "@rak
 import { typeScale } from "@rakazo/ui-tokens";
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import type { MobileMessage } from "../../lib/api";
 import { t } from "../../lib/i18n";
+import type { MobileMessage } from "../../lib/mobile-types";
 import type { useMobileTokens } from "../../lib/native";
 
 type MobileTokens = ReturnType<typeof useMobileTokens>;

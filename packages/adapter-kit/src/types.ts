@@ -676,6 +676,15 @@ export interface AgentUsage {
   pricingVersion?: string | null;
   pricingSnapshot?: Record<string, unknown> | null;
   usageSource?: string | null;
+  /** Our own count for a call that reached the provider but ended without a reported cost,
+   * deliberately low. `ifStopped` is a full count for an aborted call, priced at full rates when
+   * the user stopped its run, so stopping a call is never a discount.
+   */
+  countedTokens?: {
+    inputTokens: number;
+    outputTokens: number;
+    ifStopped?: { inputTokens: number; outputTokens: number };
+  } | null;
 }
 
 export type UsageOperationKind = "answer" | "setup" | "retrieval" | "subagent" | "compaction";
@@ -778,6 +787,8 @@ export interface VoiceCapabilities {
   catalog: boolean;
   synthesize: boolean;
   transcribe: boolean;
+  /** The provider can filter its listed voices by language. */
+  languages?: boolean;
 }
 
 export interface VoiceVerifyResult {
@@ -823,6 +834,8 @@ export interface BackgroundJobPayloads {
   "call.expire": { threadId: string; callId: string };
   "history.compact": { threadId: string; userId?: string };
   "messaging.deliver": { runId?: string };
+  /** A running chat-app run's interim messages; the run is not marked mirrored. */
+  "messaging.progress": { runId: string };
   "messaging.credential-cleanup": { installationId: string; ref: string };
   /** Reconcile durable remote-agent intent; scope is loaded from the database. */
   "cloud_agent.poll": { agentId: string };
@@ -907,7 +920,12 @@ export interface NotificationMessage {
 
 /** A product-authored transactional email, independent of its delivery vendor. */
 export interface TransactionalEmail {
-  to: string;
+  to: string | string[];
+  /** Sends as this address, such as a bot's own, instead of the provider's configured one. */
+  from?: string;
+  cc?: string[];
+  /** Where replies go, instead of the provider's configured reply-to address. */
+  replyTo?: string;
   subject: string;
   text: string;
   html?: string;

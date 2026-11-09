@@ -48,7 +48,7 @@ describe("boxd computers", () => {
 
   it("boots the stock image and builds the snapshot once in the background when it is missing", async () => {
     const boxd = new FakeBoxd();
-    const provider = new BoxdSandboxProvider({ apiKey: "test" }, boxd.client());
+    const provider = new BoxdSandboxProvider({}, boxd.client());
 
     const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
     expect(boxd.machine(computer.providerRef).params).not.toHaveProperty("fromSnapshot");
@@ -198,34 +198,37 @@ describe("boxd computers", () => {
     let live = false;
     const base = boxd.client();
     const encoder = new TextEncoder();
-    const provider = new BoxdSandboxProvider({ apiKey: "test-key" }, {
-      ...base,
-      machines: {
-        ...base.machines,
-        streamExec: (id, params) => {
-          if (!live) return base.machines.streamExec(id, params);
-          let finish!: (code: number) => void;
-          const exited = new Promise<number>((resolve) => {
-            finish = resolve;
-          });
-          void exitGate.then(() => finish(0));
-          return {
-            stdout: {
-              async *[Symbol.asyncIterator]() {
-                yield encoder.encode("code: ABCD-1234\n");
-                await exitGate;
-                yield encoder.encode("done\n");
+    const provider = new BoxdSandboxProvider(
+      {},
+      {
+        ...base,
+        machines: {
+          ...base.machines,
+          streamExec: (id, params) => {
+            if (!live) return base.machines.streamExec(id, params);
+            let finish!: (code: number) => void;
+            const exited = new Promise<number>((resolve) => {
+              finish = resolve;
+            });
+            void exitGate.then(() => finish(0));
+            return {
+              stdout: {
+                async *[Symbol.asyncIterator]() {
+                  yield encoder.encode("code: ABCD-1234\n");
+                  await exitGate;
+                  yield encoder.encode("done\n");
+                },
               },
-            },
-            stderr: {
-              async *[Symbol.asyncIterator]() {},
-            },
-            wait: () => exited,
-            close: () => finish(124),
-          } as unknown as ReturnType<typeof base.machines.streamExec>;
+              stderr: {
+                async *[Symbol.asyncIterator]() {},
+              },
+              wait: () => exited,
+              close: () => finish(124),
+            } as unknown as ReturnType<typeof base.machines.streamExec>;
+          },
         },
       },
-    });
+    );
     const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
     live = true;
     const seenPromise = events(
@@ -272,9 +275,10 @@ describe("boxd computers", () => {
     const boxd = new FakeBoxd();
     const provider = fakeBoxdProvider(boxd);
     const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
-    expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 5_000 })).toEqual(
-      [{ type: "stderr", data: "command timed out after 80 ms\n" }, { type: "exit", code: 124 }],
-    );
+    expect(await events(provider, computer, { argv: ["sleep", "60"], timeoutMs: 5_000 })).toEqual([
+      { type: "stderr", data: "command timed out after 80 ms\n" },
+      { type: "exit", code: 124 },
+    ]);
     expect(boxd.running.size).toBe(0);
   });
 
@@ -288,33 +292,36 @@ describe("boxd computers", () => {
     let live = false;
     const base = boxd.client();
     const encoder = new TextEncoder();
-    const provider = new BoxdSandboxProvider({ apiKey: "test-key" }, {
-      ...base,
-      machines: {
-        ...base.machines,
-        streamExec: (id, params) => {
-          if (!live) return base.machines.streamExec(id, params);
-          let finish!: (code: number) => void;
-          const exited = new Promise<number>((resolve) => {
-            finish = resolve;
-          });
-          void exitGate.then(() => finish(0));
-          return {
-            stdout: {
-              async *[Symbol.asyncIterator]() {
-                yield encoder.encode("code: ABCD-1234\n");
-                await exitGate;
+    const provider = new BoxdSandboxProvider(
+      {},
+      {
+        ...base,
+        machines: {
+          ...base.machines,
+          streamExec: (id, params) => {
+            if (!live) return base.machines.streamExec(id, params);
+            let finish!: (code: number) => void;
+            const exited = new Promise<number>((resolve) => {
+              finish = resolve;
+            });
+            void exitGate.then(() => finish(0));
+            return {
+              stdout: {
+                async *[Symbol.asyncIterator]() {
+                  yield encoder.encode("code: ABCD-1234\n");
+                  await exitGate;
+                },
               },
-            },
-            stderr: {
-              async *[Symbol.asyncIterator]() {},
-            },
-            wait: () => exited,
-            close: () => finish(124),
-          } as unknown as ReturnType<typeof base.machines.streamExec>;
+              stderr: {
+                async *[Symbol.asyncIterator]() {},
+              },
+              wait: () => exited,
+              close: () => finish(124),
+            } as unknown as ReturnType<typeof base.machines.streamExec>;
+          },
         },
       },
-    });
+    );
     const computer = await provider.provision({ botId: "bot", homePath: "/unused" }, ctx);
     live = true;
     const iterator = provider
@@ -415,7 +422,7 @@ describe("boxd computers", () => {
   it("does not rebuild a snapshot that is already ready", async () => {
     const boxd = new FakeBoxd();
     boxd.snapshots.set(BOXD_COMPUTER_SNAPSHOT, "ready");
-    const provider = new BoxdSandboxProvider({ apiKey: "test" }, boxd.client());
+    const provider = new BoxdSandboxProvider({}, boxd.client());
 
     expect(await provider.buildComputerSnapshot()).toEqual({
       name: BOXD_COMPUTER_SNAPSHOT,

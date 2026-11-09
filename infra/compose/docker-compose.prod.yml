@@ -50,6 +50,13 @@ x-app-environment: &app-environment
   PHONE_CALLS_ENABLED:
   PHONE_CALL_RING_SECONDS:
   PHONE_CALL_COOLDOWN_MINUTES:
+  # The worker names each bot's address to it and sends its email; the API receives the mail.
+  INBOUND_EMAIL_DOMAIN:
+  EMAIL_PROVIDER:
+  EMAIL_API_KEY:
+  SMTP_URL:
+  EMAIL_FROM:
+  EMAIL_REPLY_TO:
   RAKAZO_SECRETS_ALLOW_PRIVATE_HTTP:
   EXPO_ACCESS_TOKEN:
   APNS_VOIP_KEY_ID:
@@ -299,13 +306,28 @@ services:
         fi
         exec docker-entrypoint.sh "$$@"
       - postgres
-    command: ["postgres"]
+    # Sized for an 8 GB host that also runs the api, worker and web. shared_buffers lives inside
+    # mem_limit, so lower both together on a smaller host (docs/self-host-configuration.md#postgres-memory).
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${POSTGRES_SHARED_BUFFERS:-1GB}
+      - -c
+      - effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-2GB}
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
     restart: unless-stopped
     logging: *logging
     security_opt:
       - no-new-privileges:true
     pids_limit: 200
-    mem_limit: 2g
+    mem_limit: ${POSTGRES_MEMORY_LIMIT:-2560m}
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rakazo}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -471,12 +493,6 @@ services:
       RAKAZO_GIT_SHA:
       SENTRY_BROWSER_DSN: ${SENTRY_BROWSER_DSN:-}
       PRIVACY_POLICY_URL:
-      EMAIL_PROVIDER:
-      EMAIL_API_KEY:
-      SMTP_URL:
-      EMAIL_FROM:
-      EMAIL_REPLY_TO:
-      INBOUND_EMAIL_DOMAIN:
       INBOUND_EMAIL_SECRET:
       WELCOME_EMAIL_ENABLED:
       STRIPE_SECRET_KEY:

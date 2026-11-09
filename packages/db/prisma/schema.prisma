@@ -50,47 +50,49 @@ model User {
   byokTrialCheckoutOrganizationId String?
   byokTrialCheckoutExpiresAt      DateTime?
   /// Set while the account may not sign in or run work; its content stays. Cleared to reactivate.
-  deactivatedAt                   DateTime?
-  sessions                        Session[]
-  accounts                        Account[]
-  scimSubject                     ScimSubject?
-  scimUsers                       ScimUser[]
-  scimIdentityTombstones          ScimIdentityTombstone[]
-  scimProjectionGrants            ScimProjectionGrant[]
-  passkeys                        Passkey[]
-  members                         Member[]
-  accessGrants                    AccessGrant[]
-  invitations                     Invitation[]
-  modelCredentials                UserModelCredential[]
-  voiceCredentials                UserVoiceCredential[]
-  paymentWallet                   PaymentWallet?
-  spendingLimit                   SpendingLimit?
-  payments                        Payment[]
-  secrets                         Secret[]
-  mcpServers                      McpServer[]
-  botSections                     BotSection[]
-  actionApprovalRules             ActionApprovalRule[]
-  actionAutoReviewPreferences     ActionAutoReviewPreference[]
-  modelRoleChoices                UserModelRoleChoice[]
-  modelPreferences                UserModelPreference[]
-  voicePreferences                UserVoicePreference[]
-  approvalRules                   UserActionApprovalRule[]
-  autoReviewPreference            UserActionAutoReviewPreference?
-  createdSpaces                   Space[]                         @relation("SpaceCreator")
-  spaceInvites                    SpaceInvite[]                   @relation("SpaceInviteCreator")
-  botSecrets                      BotSecret[]
-  vaultCredentials                VaultCredential[]
-  agentSecrets                    AgentSecret[]
-  createdTickets                  Ticket[]                        @relation("TicketCreatorUser")
-  ticketComments                  TicketComment[]                 @relation("TicketCommentAuthorUser")
-  pushToken                       PushToken?
-  callPushDevices                 CallPushDevice[]
-  trustedLinkSites                TrustedLinkSite[]
-  feedbackReports                 FeedbackReport[]
-  emailSends                      EmailSend[]
-  signupSurvey                    SignupSurvey?
-  computerRuns                    ComputerRun[]
-  devices                         UserDevice[]
+  deactivatedAt               DateTime?
+  sessions                    Session[]
+  accounts                    Account[]
+  scimSubject                 ScimSubject?
+  scimUsers                   ScimUser[]
+  scimIdentityTombstones      ScimIdentityTombstone[]
+  scimProjectionGrants        ScimProjectionGrant[]
+  passkeys                    Passkey[]
+  members                     Member[]
+  accessGrants                AccessGrant[]
+  invitations                 Invitation[]
+  modelCredentials            UserModelCredential[]
+  voiceCredentials            UserVoiceCredential[]
+  paymentWallet               PaymentWallet?
+  spendingLimit               SpendingLimit?
+  payments                    Payment[]
+  secrets                     Secret[]
+  mcpServers                  McpServer[]
+  botSections                 BotSection[]
+  actionApprovalRules         ActionApprovalRule[]
+  actionAutoReviewPreferences ActionAutoReviewPreference[]
+  modelRoleChoices            UserModelRoleChoice[]
+  modelPreferences            UserModelPreference[]
+  voicePreferences            UserVoicePreference[]
+  approvalRules               UserActionApprovalRule[]
+  autoReviewPreference        UserActionAutoReviewPreference?
+  createdSpaces               Space[]                      @relation("SpaceCreator")
+  spaceInvites                SpaceInvite[]                @relation("SpaceInviteCreator")
+  botSecrets BotSecret[]
+  vaultCredentials VaultCredential[]
+  agentSecrets               AgentSecret[]
+  createdTickets              Ticket[]                     @relation("TicketCreatorUser")
+  ticketComments              TicketComment[]              @relation("TicketCommentAuthorUser")
+  pushToken                   PushToken?
+  callPushDevices             CallPushDevice[]
+  workActivityTokens          WorkActivityToken[]
+  trustedLinkSites            TrustedLinkSite[]
+  feedbackReports             FeedbackReport[]
+  emailSends                  EmailSend[]
+  botEmailSends               BotEmailSend[]
+  signupSurvey                SignupSurvey?
+  computerRuns                ComputerRun[]
+  devices                     UserDevice[]
   userComputerPolicies            UserComputerPolicy[]
   messagingInstallations          MessagingInstallation[]
   messagingInstallSessions        MessagingInstallSession[]
@@ -157,6 +159,25 @@ model CallPushDevice {
 
   @@index([userId, sessionId])
   @@map("call_push_devices")
+}
+
+/// A phone's live status card for the user's bots at work. Rows go once no bot is working.
+model WorkActivityToken {
+  tokenDigest String @id
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The session that registered the card; the card ends with it. No FK, as for push tokens.
+  sessionId String
+  ciphertext String
+  /// A keyed digest of the last state sent, so unchanged work sends nothing.
+  lastState String?
+  /// Bots waiting on the user in that state, so a new question shows at once.
+  lastWaiting Int @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([sessionId])
+  @@map("work_activity_tokens")
 }
 
 model EmailSend {
@@ -613,6 +634,9 @@ model Space {
   createdAt                   DateTime                     @default(now())
   deletingAt                  DateTime?
   deletionClaimId             String?
+  /// The attempt holding the claim: every account deletion attempt shares one `deletionClaimId`,
+  /// so its rollback and handover touch only rows still carrying its own attempt id.
+  deletionAttemptId           String?
   memberships                 SpaceMember[]
   invites                     SpaceInvite[]
   bots                        Bot[]
@@ -701,6 +725,7 @@ model SpaceMember {
   aiDataConsents   AiDataConsent[]
   modelRoleChoices SpaceModelRoleChoice[]
   settingOverrides SpaceSettingOverride[]
+  threadReads      ThreadRead[]
 
   @@unique([spaceId, userId])
   @@index([organizationId, userId])
@@ -946,55 +971,56 @@ model Bot {
   color                   String
   avatarSet               String            @default("organic")
   /// True once the owner picks this bot a set other than their default; the default no longer moves it.
-  avatarSetPinned         Boolean           @default(false)
-  notifyOnFinish          Boolean           @default(true)
-  pinned                  Boolean           @default(false)
-  position                Int               @default(0)
-  sectionId               String?
-  section                 BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
-  archivedAt              DateTime?
-  parentBotId             String?
-  spawnKey                String?
-  memoryScope             String?
-  parent                  Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
-  children                Bot[]             @relation("BotChildren")
-  createdAt               DateTime          @default(now())
-  updatedAt               DateTime          @updatedAt
-  thread                  Thread?
-  computerId              String?
-  computer                Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
-  computerSwitching       Boolean           @default(false)
-  voiceId                 String?
-  autoSpeak               Boolean           @default(false)
-  modelProvider           String?
-  modelId                 String?
-  thinkingLevel           String?
-  disabledBuiltinTools    String[]          @default([])
-  webhookSecretId         String?
-  teamChatAmbientEnabled  Boolean           @default(false)
-  teamChatRules           String            @default("")
-  crossSpaceCommunication Boolean           @default(true)
-  dailyCheckIns           Boolean           @default(true)
-  fleetManagement         Boolean           @default(true)
-  replyMode               String            @default("chat")
-  routines                Routine[]
-  scratchpadItems         ScratchpadItem[]
-  taughtSkills            TaughtSkill[]
-  memoryDocuments         MemoryDocument[]
-  agentHome               AgentHome?
-  browserProfile          BrowserProfile?
-  artifacts               Artifact[]
-  pages                   Page[]
-  tasks                   Task[]
-  runs                    Run[]
-  steeringMessages        SteeringMessage[]
-  mcpServers              BotMcpServer[]
-  agentImports            AgentImport[]
-  groupMembers            ChatGroupMember[]
-  botSecrets              BotSecret[]
-  assignedTickets         Ticket[]          @relation("TicketAssigneeBot")
-  createdTickets          Ticket[]          @relation("TicketCreatorBot")
-  ticketComments          TicketComment[]   @relation("TicketCommentAuthorBot")
+  avatarSetPinned   Boolean           @default(false)
+  notifyOnFinish    Boolean           @default(true)
+  pinned            Boolean           @default(false)
+  position          Int               @default(0)
+  sectionId         String?
+  section           BotSection?       @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  archivedAt        DateTime?
+  parentBotId       String?
+  spawnKey          String?
+  memoryScope       String?
+  parent            Bot?              @relation("BotChildren", fields: [parentBotId], references: [id], onDelete: SetNull)
+  children          Bot[]             @relation("BotChildren")
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  thread            Thread?           @relation("BotThread")
+  helperThreads     Thread[]          @relation("BotHelperThreads")
+  computerId        String?
+  computer          Computer?         @relation(fields: [computerId], references: [id], onDelete: SetNull)
+  computerSwitching Boolean           @default(false)
+  voiceId           String?
+  autoSpeak         Boolean           @default(false)
+  modelProvider     String?
+  modelId           String?
+  thinkingLevel     String?
+  disabledBuiltinTools String[] @default([])
+  webhookSecretId   String?
+  teamChatAmbientEnabled Boolean @default(false)
+  teamChatRules          String  @default("")
+  crossSpaceCommunication Boolean @default(true)
+  dailyCheckIns Boolean @default(true)
+  fleetManagement        Boolean @default(true)
+  replyMode              String  @default("chat")
+  routines          Routine[]
+  scratchpadItems   ScratchpadItem[]
+  taughtSkills      TaughtSkill[]
+  memoryDocuments   MemoryDocument[]
+  agentHome         AgentHome?
+  browserProfile    BrowserProfile?
+  artifacts         Artifact[]
+  pages             Page[]
+  tasks             Task[]
+  runs              Run[]
+  steeringMessages  SteeringMessage[]
+  mcpServers        BotMcpServer[]
+  agentImports      AgentImport[]
+  groupMembers      ChatGroupMember[]
+  botSecrets BotSecret[]
+  assignedTickets   Ticket[]          @relation("TicketAssigneeBot")
+  createdTickets    Ticket[]          @relation("TicketCreatorBot")
+  ticketComments    TicketComment[]   @relation("TicketCommentAuthorBot")
 
   externalConversations    ExternalConversation[]
   userComputerPolicies     UserComputerPolicy[]
@@ -1078,36 +1104,58 @@ model ChatGroupMember {
 }
 
 model Thread {
-  id                             String                @id @default(cuid())
-  spaceId                        String
-  space                          Space                 @relation(fields: [spaceId], references: [id], onDelete: Cascade)
-  botId                          String?               @unique
-  bot                            Bot?                  @relation(fields: [botId], references: [id], onDelete: Cascade)
-  groupId                        String?               @unique
-  group                          ChatGroup?            @relation(fields: [groupId], references: [id], onDelete: Cascade)
-  externalConversationId         String?               @unique
-  externalConversation           ExternalConversation? @relation(fields: [externalConversationId], references: [id], onDelete: Cascade)
-  userId                         String
-  createdAt                      DateTime              @default(now())
-  nextEventSeq                   Int                   @default(0)
-  nextMessageSeq                 Int                   @default(0)
-  historyCompactedUpToSeq        Int?
-  historyCompactionSummary       String?               @db.Text
-  historyCompactionGeneration    Int                   @default(0)
+  id                          String     @id @default(cuid())
+  spaceId                     String
+  space                       Space      @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  botId                       String?    @unique
+  bot                         Bot?       @relation("BotThread", fields: [botId], references: [id], onDelete: Cascade)
+  /// Set only on a background helper's own thread: the bot that started the helper owns it.
+  helperBotId                 String?
+  helperBot                   Bot?       @relation("BotHelperThreads", fields: [helperBotId], references: [id], onDelete: Cascade)
+  groupId                     String?    @unique
+  group                       ChatGroup? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  externalConversationId      String?    @unique
+  externalConversation        ExternalConversation? @relation(fields: [externalConversationId], references: [id], onDelete: Cascade)
+  userId                      String
+  createdAt                   DateTime   @default(now())
+  nextEventSeq                Int        @default(0)
+  nextMessageSeq              Int        @default(0)
+  historyCompactedUpToSeq     Int?
+  historyCompactionSummary    String?    @db.Text
+  historyCompactionGeneration Int        @default(0)
   /// After a summary came back over the size limit, compaction waits until nextMessageSeq reaches this.
   historyCompactionRetryAfterSeq Int?
-  unread                         Boolean               @default(false)
-  /// Highest message seq the user has read; the "New" divider goes after it. -1 = none read.
-  lastReadSeq                    Int                   @default(-1)
-  messages                       Message[]
-  events                         Event[]
-  tasks                          Task[]
-  runs                           Run[]
-  routines                       Routine[]
+  reads                       ThreadRead[]
+  messages                    Message[]
+  events                      Event[]
+  tasks                       Task[]
+  runs                        Run[]
+  routines                    Routine[]
 
   @@index([spaceId])
   @@index([spaceId, userId])
+  @@index([helperBotId])
   @@map("threads")
+}
+
+/// One member's personal state for a chat: how far they've read, and whether they've snoozed
+/// it. Named for its first use (reads). No row means caught up and not snoozed.
+/// Leaving the Space deletes it with the membership.
+model ThreadRead {
+  threadId    String
+  thread      Thread      @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  userId      String
+  spaceId     String
+  member      SpaceMember @relation(fields: [spaceId, userId], references: [spaceId, userId], onDelete: Cascade)
+  unread      Boolean     @default(false)
+  /// Highest message seq this member has read; the "New" divider goes after it. -1 = none read.
+  lastReadSeq Int         @default(-1)
+  /// Hidden from this member's chat list until then; once past, the chat shows as woken until opened.
+  snoozedUntil DateTime?
+
+  @@id([threadId, userId])
+  @@index([spaceId, userId])
+  @@map("thread_reads")
 }
 
 model Message {
@@ -1243,8 +1291,10 @@ model Run {
   @@index([sourceMessageId])
   @@index([threadId, status, createdAt])
   @@index([threadId, createdAt, id])
+  @@index([userId, status, createdAt])
   // Partial index runs_recent_activity_idx (recent foreground activity) is created in SQL.
   // Partial index runs_bot_outcome_pending_idx (unreturned bot-message outcomes) is created in SQL.
+  // Partial index runs_helper_outcome_pending_idx (unreturned background-helper outcomes) is created in SQL.
   @@index([routineId])
   @@map("runs")
 }
@@ -1518,12 +1568,28 @@ model BotEmailMessage {
   subject     String
   text        String
   /// Kept files ({ artifactId, name, mimeType, size }) and names of refused ones ({ name }).
-  attachments Json     @default("[]")
-  receivedAt  DateTime @default(now())
+  attachments Json      @default("[]")
+  receivedAt  DateTime  @default(now())
+  /// Blind-index search tokens for the encrypted sender, subject and text; NULL until encrypted.
+  searchTokens Int[]
 
   @@unique([botId, key])
   @@index([botId, receivedAt])
   @@map("bot_email_messages")
+}
+
+/// One email a bot sent, for the daily send limits. Kept apart from the bot and its Space, so
+/// deleting a bot or spreading bots over Spaces never resets what its owner has sent.
+model BotEmailSend {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// No relation: a deleted bot's sends still count toward its owner's limit.
+  botId  String
+  sentAt DateTime @default(now())
+
+  @@index([userId, sentAt])
+  @@map("bot_email_sends")
 }
 
 model ScratchpadItem {
@@ -1883,6 +1949,8 @@ model Artifact {
   rootArtifact   Artifact?  @relation("ArtifactVersions", fields: [rootArtifactId], references: [id], onDelete: Cascade)
   versions       Artifact[] @relation("ArtifactVersions")
   version        Int        @default(1)
+  // A file a stranger emailed: its own family, never one a later upload of that name joins.
+  standalone     Boolean    @default(false)
   // Client-chosen per upload so a retried upload that already landed returns this row.
   clientNonce    String?
 
@@ -2489,6 +2557,8 @@ model BillingAuditEvent {
   createdAt         DateTime @default(now())
 
   @@index([organizationId, createdAt])
+  /// Balance verification sums an organization's journal from the index alone.
+  @@index([organizationId, amountMicros])
   @@index([callId, createdAt])
   @@map("billing_audit_events")
 }
