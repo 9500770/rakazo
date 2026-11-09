@@ -14,12 +14,9 @@ export const USE_TOOL = "use_tool";
 const FIND_TOOL_LIMIT = 3;
 
 /**
- * Built-in tools the model always sees with full schemas: everyday work, and the tools the
- * runtime answers itself. A turn checkpoint resumes ask_user and request_takeover by their
- * provider-visible name, so those must stay listed; end_call and run_subagent are handled by
- * the voice and helper runtimes. Everything else a run is offered is reached through
- * find_tool and use_tool, so the listed tools stay small and never change mid-run. Real
- * usage is a steep power law, so only tools that earn their schema go here.
+ * Built-in tools the model always sees with full schemas: everyday work, and every tool the
+ * runtime answers itself. Other built-ins offered to a run are reached through find_tool and
+ * use_tool, so the listed tools stay small and never change mid-run.
  */
 export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "shell",
@@ -27,6 +24,7 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "read_file",
   "write_file",
   "list_files",
+  "attach_file",
   "web_search",
   "web_fetch",
   "computer_observe",
@@ -37,10 +35,19 @@ export const CORE_BUILTIN_TOOL_NAMES: ReadonlySet<string> = new Set([
   "ask_user",
   "message_user",
   "request_takeover",
+  "request_secret",
+  "connect_app",
   "run_subagent",
+  "skill_read",
   "update_bot",
+  "update_preferences",
   "remember",
+  "save_memory",
+  "recall_memory",
   "schedule_create",
+  "schedule_list",
+  "search_history",
+  "read_history",
   "end_call",
 ]);
 

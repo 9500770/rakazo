@@ -25,11 +25,11 @@ vi.mock("@earendil-works/pi-agent-core", () => ({
     subscribe(_listener: unknown) {}
 
     async prompt() {
-      const invoke = this.tools.find((tool) => tool.name === "use_tool");
-      if (!invoke) throw new Error("use_tool missing");
-      fakeAgentState.lastToolResult = await invoke.execute(fakeAgentState.toolCallId, {
-        name: "request_secret",
-        arguments: { label: "Enter code", purpose: "otp" },
+      const secret = this.tools.find((tool) => tool.name === "request_secret");
+      if (!secret) throw new Error("request_secret tool missing");
+      fakeAgentState.lastToolResult = await secret.execute(fakeAgentState.toolCallId, {
+        label: "Enter code",
+        purpose: "otp",
       });
       if (
         fakeAgentState.lastToolResult &&
