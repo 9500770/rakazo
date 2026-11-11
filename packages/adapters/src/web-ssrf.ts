@@ -8,10 +8,11 @@ import {
 } from "@rakazo/contracts";
 import { readBoundedResponseBytes } from "@rakazo/core";
 import type { Dispatcher } from "undici";
-import { EnvHttpProxyAgent, Pool } from "undici";
+import { EnvHttpProxyAgent } from "undici";
 import type { ResolvedAddress, ResolveHostname } from "./network-address.js";
 import { createAddressCheckedLookup, egressRefused } from "./network-address.js";
 import { anyOutboundProxyConfigured, outboundProxyForUrl } from "./outbound-proxy.js";
+import { createCheckedProxyDispatcher } from "./proxy-dispatcher.js";
 import { fetchPairedWithDispatcher } from "./undici-fetch.js";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -179,53 +180,6 @@ export async function fetchSafeHttpRequest(
   });
 }
 
-/**
- * Honors HTTP(S)_PROXY / NO_PROXY. Direct requests connect through the address-checked lookup.
- * Proxied requests tunnel by hostname and let the proxy resolve it: local DNS may be poisoned
- * (blocked networks return bogus private answers), and pinning those answers would send the
- * tunnel to the wrong host. The egress boundary for a proxied request is the operator's proxy.
- */
-function safeWebDispatcher(resolve: ResolveHostname): Dispatcher {
-  const { env } = process;
-  for (const proxy of [env.http_proxy ?? env.HTTP_PROXY, env.https_proxy ?? env.HTTPS_PROXY]) {
-    if (proxy && !/^https?:\/\//i.test(proxy)) throw new Error("Only HTTP proxies are supported");
-  }
-  if (anyOutboundProxyConfigured()) {
-    return new EnvHttpProxyAgent({
-      connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
-      proxyTunnel: true,
-    });
-  }
-  return new EnvHttpProxyAgent({
-    connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
-    proxyTunnel: true,
-    clientFactory: (origin, options) => {
-      const pool = new Pool(origin, options);
-      const connect = pool.connect.bind(pool) as (
-        options: Dispatcher.ConnectOptions,
-      ) => Promise<Dispatcher.ConnectData>;
-      return Object.assign(pool, {
-        connect: async (options: Dispatcher.ConnectOptions) => {
-          const authority = await checkedAuthority(options.path, resolve);
-          return connect({
-            ...options,
-            path: authority,
-            headers: { ...(options.headers as Record<string, string>), host: authority },
-          });
-        },
-      });
-    },
-  });
-}
-
-async function checkedAuthority(authority: string, resolve: ResolveHostname): Promise<string> {
-  const separator = authority.lastIndexOf(":");
-  const [first] = await resolvePublicHost(authority.slice(0, separator), resolve);
-  const address = first?.address ?? "";
-  const host = ipVersion(address) === 6 ? `[${address}]` : address;
-  return `${host}${authority.slice(separator)}`;
-}
-
 async function withSafeEgress<T>(
   options: SafeWebFetchOptions,
   run: (egress: {
@@ -238,7 +192,18 @@ async function withSafeEgress<T>(
   const resolve = options.resolveHostname ?? defaultResolveHostname;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const baseFetch = fetchPairedWithDispatcher(options.fetch);
-  const dispatcher = safeWebDispatcher(resolve);
+  // Proxied egress tunnels by hostname and leaves resolution to the operator's proxy; direct
+  // egress keeps the address-checked lookup and the checked CONNECT pin.
+  const dispatcher = anyOutboundProxyConfigured()
+    ? new EnvHttpProxyAgent({
+        connect: { lookup: createAddressCheckedLookup(resolve, assertPublicAddresses) },
+        proxyTunnel: true,
+      })
+    : createCheckedProxyDispatcher(resolve, (addresses, hostname) => {
+        if (isBlockedHostname(hostname))
+          throw new Error("URL targets a private or internal host");
+        assertPublicAddresses(addresses);
+      });
   // One deadline for the whole redirect chain + body read + cleanup, not per hop.
   const signal = combineSignals(options.signal, AbortSignal.timeout(timeoutMs));
   const cleanup =

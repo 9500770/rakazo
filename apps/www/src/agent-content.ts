@@ -13,6 +13,7 @@ import {
   voiceProvidersHubMarkdown,
 } from "./voice-providers";
 import { BRAND_COLORS, BRAND_LOGOS } from "./brand";
+import { ENTERPRISE_MARKDOWN } from "./enterprise";
 import { GROK_ALTERNATIVE_MARKDOWN } from "./grok-alternative";
 import { OPENCLAW_MARKDOWN, SELF_HOST_MARKDOWN } from "./guide";
 import {
@@ -101,6 +102,7 @@ ${home.cta.copy}
 - [Blog](https://rakazo.com/blog/)
 - [Grok Bot alternatives](https://rakazo.com/grok-bot-alternative/)
 - [Pricing](https://rakazo.com/pricing/): free to self-host, or hosted with your own model or Rakazo credits.
+- [Enterprise](https://rakazo.com/enterprise/): SSO, SCIM, audit log, encryption at rest, and approval rules on your own infrastructure.
 - [Download](https://rakazo.com/download/): desktop, mobile, and web apps.
 - [About](https://rakazo.com/about/)
 - [Brand](https://rakazo.com/brand/)
@@ -129,7 +131,7 @@ export const DOWNLOAD_MARKDOWN = `# Download Rakazo
 - [macOS](https://rakazo.com/api/download?platform=mac)
 - [Windows](https://rakazo.com/api/download?platform=windows)
 - [Linux](https://rakazo.com/api/download?platform=linux)
-- [iPhone](${IOS_APP_URL})
+- [iPhone, iPhone Duo, and iPad](${IOS_APP_URL})
 - [Android](${ANDROID_APP_STORE_URL})
 - [Web](${APP_URL})
 
@@ -153,7 +155,7 @@ Rakazo processes account details, user-provided bot content, connection informat
 
 Before submitting content or starting AI work, the Rakazo mobile app names the configured recipients, explains the data and purpose, and asks permission. Messages, relevant history, instructions, memories, attachments, screenshots, and connected-app content may be sent to model services for responses and tasks, including scheduled tasks. Recorded audio may be sent for transcription and text for speech generation. Conversation summaries, memories, queries, and bot and Space identifiers may be sent to a configured memory service.
 
-Supported connections include OpenAI, Anthropic, Google, OpenRouter, Vercel AI Gateway, Cursor, custom model servers, ElevenLabs, Cartesia, Fish Audio, and Supermemory. The mobile disclosure identifies the configured services. Gateways forward requests to model providers according to their routing settings and provider agreements. The mobile permission flow does not modify provider routing or promise zero retention.
+Supported connections include OpenAI, Anthropic, Google, OpenRouter, Vercel AI Gateway, Cursor, custom model servers, ElevenLabs, Cartesia, Fish Audio, xAI, and Supermemory. The mobile disclosure identifies the configured services. Gateways forward requests to model providers according to their routing settings and provider agreements. The mobile permission flow does not modify provider routing or promise zero retention.
 
 Permission records include the recipient, Space, disclosure version, and time. Choose Not now to decline, or withdraw permission in Account → AI data sharing for new mobile actions. Stop existing runs and disable routines separately. Withdrawal cannot recall data already sent. Web, desktop, and self-hosted server workflows do not use this mobile permission flow.
 
@@ -206,6 +208,7 @@ Rakazo Cloud at https://app.rakazo.com is in beta. Self-hosting is also availabl
 - [Alternatives](https://rakazo.com/alternatives/)
 - [Grok Bot alternatives](https://rakazo.com/grok-bot-alternative/)
 - [Pricing](https://rakazo.com/pricing/): free to self-host, or hosted with your own model or Rakazo credits.
+- [Enterprise](https://rakazo.com/enterprise/): SSO, SCIM, audit log, encryption at rest, and approval rules on your own infrastructure.
 - [Download](https://rakazo.com/download/): desktop, mobile, and web apps.
 - [About](https://rakazo.com/about/)
 - [Brand](https://rakazo.com/brand/)
@@ -218,7 +221,7 @@ Rakazo Cloud at https://app.rakazo.com is in beta. Self-hosting is also availabl
 - [Integrations](https://rakazo.com/integrations/): every app a bot can connect to. [Markdown list](https://rakazo.com/integrations.md); each app page has a Markdown version with its actions.
 - [Sandboxes for AI agents](https://rakazo.com/sandboxes/): where bot computers can run, compared, with a page per provider. Each page has a Markdown version.
 - [Integration platforms for AI agents](https://rakazo.com/integration-platforms/): Composio, Pipedream, MCP servers and API connectors compared, with a page for each. Each page has a Markdown version.
-- [Voice providers for AI agents](https://rakazo.com/voice-providers/): ElevenLabs, OpenAI, Cartesia, Fish Audio, self-hosted speech servers and macOS voices compared, with a page for each. Each page has a Markdown version.
+- [Voice providers for AI agents](https://rakazo.com/voice-providers/): ElevenLabs, OpenAI, Cartesia, Fish Audio, xAI, self-hosted speech servers and macOS voices compared, most with a page of their own. Each page has a Markdown version.
 - [Submit a plugin](https://rakazo.com/plugins/submit/): list a plugin in the Rakazo marketplace. [Markdown with the API](https://rakazo.com/plugins/submit.md).
 - [Blog](https://rakazo.com/blog/)
 - [Releases](https://github.com/elie222/rakazo/releases)
@@ -294,6 +297,7 @@ const MARKDOWN_DOCUMENTS = new Map<string, string>([
   ["/about", ABOUT_MARKDOWN],
   ["/brand", BRAND_MARKDOWN],
   ["/download", DOWNLOAD_MARKDOWN],
+  ["/enterprise", ENTERPRISE_MARKDOWN],
   ["/openclaw-alternative", OPENCLAW_MARKDOWN],
   ["/grok-bot-alternative", GROK_ALTERNATIVE_MARKDOWN],
   ["/privacy", PRIVACY_MARKDOWN],

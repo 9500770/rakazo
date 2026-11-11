@@ -76,6 +76,7 @@ import { resolveCompletedSecretLeftover } from "./run-secret.js";
 import type { ToolRequest } from "./run-tool-request.js";
 import { BUILTIN_AGENT_TOOL_NAMES, READ_ONLY_AGENT_TOOLS } from "./run-tool-selection.js";
 import { callMediaTool } from "./run-tools-files.js";
+import { callPaidService } from "./run-tools-integrations.js";
 import {
   USER_COMPUTER_TOOLS,
   userComputerGate,
@@ -88,6 +89,7 @@ import {
 import { connectorTrustKeys } from "./run-trust.js";
 import { watchFromTool } from "./schedule-tools.js";
 import { pagePaymentPrecheck, paysWithWallet } from "./spending-gate.js";
+import { refusal } from "./tool-refusal.js";
 
 export type AppliedEffect = Awaited<ReturnType<typeof recordEffect>>;
 
@@ -208,9 +210,10 @@ export async function gateToolCall(
       approvalToolNames.some((toolName) => declaredReadOnlyFor(toolName) !== true))
   ) {
     return {
-      result: {
-        error: `${name} can change something, and a background helper may only read. Don't retry; say in your result what the bot should do.`,
-      },
+      result: refusal(
+        "helper_read_only",
+        `${name} can change something, and a background helper may only read. Don't retry; say in your result what the bot should do.`,
+      ),
     };
   }
   const connectorProviders = ctx.tools.connectedPlugins.map((plugin) => plugin.provider);
@@ -220,9 +223,15 @@ export async function gateToolCall(
     SITE_SENDING_TOOLS.has(name) && (name === "web_fetch" || args.url !== undefined);
   const fetchUrl = sendsToSite ? normalizedHttpUrl(String(args.url ?? "")) : undefined;
   const fetchSite = fetchUrl ? urlSite(fetchUrl) : undefined;
-  if (sendsToSite && !fetchSite) return { result: { error: "url must be an http(s) URL" } };
+  if (sendsToSite && !fetchSite)
+    return { result: refusal("fetch_url_invalid", "url must be an http(s) URL") };
   if (fetchUrl && fetchUrl.length > MAX_FETCH_URL_LENGTH)
-    return { result: { error: `url must be at most ${MAX_FETCH_URL_LENGTH} characters` } };
+    return {
+      result: refusal(
+        "fetch_url_too_long",
+        `url must be at most ${MAX_FETCH_URL_LENGTH} characters`,
+      ),
+    };
   // The card, the stored effect and the request all use the URL the gate checked.
   if (fetchUrl) {
     args = { ...args, url: fetchUrl };
@@ -396,10 +405,10 @@ export async function gateToolCall(
   if (paying && run.trigger === "webhook" && plan !== "deny") {
     await auditToolCall(ctx, name, "denied", { reason: "purchase_unattended" });
     return {
-      result: {
-        error:
-          "This would complete a purchase, which needs the user's approval, and a webhook run cannot ask. Don't retry; tell the user.",
-      },
+      result: refusal(
+        "purchase_needs_approval_unattended",
+        "This would complete a purchase, which needs the user's approval, and a webhook run cannot ask. Don't retry; tell the user.",
+      ),
     };
   }
   if (plan === "deny") {
@@ -407,12 +416,12 @@ export async function gateToolCall(
       reason: approvalResolved.decision === "deny" ? "rule" : "never_asks",
     });
     return {
-      result: {
-        error:
-          approvalResolved.decision === "deny"
-            ? `${name} is blocked in this space${blockingRuleSuffix(approvalResolved)}. Don't try it another way; tell the user it's blocked.`
-            : `${name} needs the owner's approval because it could have been asked for by someone else, and this space never asks. Don't retry; tell the user.`,
-      },
+      result: refusal(
+        "approval_denied",
+        approvalResolved.decision === "deny"
+          ? `${name} is blocked in this space${blockingRuleSuffix(approvalResolved)}. Don't try it another way; tell the user it's blocked.`
+          : `${name} needs the owner's approval because it could have been asked for by someone else, and this space never asks. Don't retry; tell the user.`,
+      ),
     };
   }
   // A pay click counts against the user's spending limit, unless it pays with a wallet purchase,
@@ -429,7 +438,7 @@ export async function gateToolCall(
     const refused = await pagePaymentPrecheck(deps.prisma, spender, spends);
     if (refused) {
       await auditToolCall(ctx, name, "denied", { reason: "spending_limit" });
-      return { result: { error: refused } };
+      return { result: refusal("spending_limit", refused) };
     }
   }
   let reviewReason: string | undefined;
@@ -517,7 +526,7 @@ export async function gateToolCall(
       where: { id: applied.effect.id, status: "intended" },
       data: { status: "denied", result: { refused: "repeat" } },
     });
-    return { result: { error: DENIED_ACTION_ERROR } };
+    return { result: refusal("action_denied_repeat", DENIED_ACTION_ERROR) };
   }
 
   const runAutoReview = async () => {
@@ -579,7 +588,10 @@ export async function gateToolCall(
       });
     }
     return {
-      result: { error: `Fetching ${fetchSite} needs approval, and a webhook run cannot ask.` },
+      result: refusal(
+        "fetch_needs_approval_unattended",
+        `Fetching ${fetchSite} needs approval, and a webhook run cannot ask.`,
+      ),
     };
   }
 
@@ -593,9 +605,10 @@ export async function gateToolCall(
       });
     }
     return {
-      result: {
-        error: `${name} needs the owner's approval, and a background helper cannot ask. Don't retry; say in your result what the bot should ask for.`,
-      },
+      result: refusal(
+        "helper_cannot_ask_approval",
+        `${name} needs the owner's approval, and a background helper cannot ask. Don't retry; say in your result what the bot should ask for.`,
+      ),
     };
   }
   const call = createToolCall(ctx, {
@@ -785,6 +798,16 @@ async function settleToolUncertainty(
     const recovered = await callMediaTool(ctx, call, true);
     if (
       recovered !== undefined &&
+      (await completeEffect(ctx.deps, effectId, "executing", recovered))
+    )
+      return recovered;
+  }
+  if (call.name === "service_call") {
+    const recovered = await callPaidService(ctx, call).catch(() => undefined);
+    // Only an answer the provider settled carries a cost; anything else stays uncertain.
+    if (
+      recovered &&
+      "cost_usd" in recovered &&
       (await completeEffect(ctx.deps, effectId, "executing", recovered))
     )
       return recovered;

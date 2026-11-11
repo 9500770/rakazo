@@ -1,8 +1,9 @@
+import { ph, t } from "@lingui/core/macro";
+import { useLingui } from "@lingui/react/macro";
 import { formatCompactDuration, toolActivityKind, toolNameFromLabel } from "@rakazo/core";
 import { typeScale } from "@rakazo/ui-tokens";
 import { useEffect, useState } from "react";
 import { Text, View } from "react-native";
-import { t } from "../../lib/i18n";
 import type { MobileMessage } from "../../lib/mobile-types";
 import type { useMobileTokens } from "../../lib/native";
 
@@ -21,6 +22,7 @@ export function LiveActivityLine({
   /** Passed by the row, which already resolves tokens, so this line adds no appearance import. */
   tokens: MobileTokens;
 }) {
+  const { t } = useLingui();
   const isLive = message.id.startsWith("progress:");
   const steps = message.blocks.find((block) => block.kind === "steps");
   const [, setTick] = useState(0);
@@ -34,12 +36,12 @@ export function LiveActivityLine({
   const kind = label ? toolActivityKind(toolNameFromLabel(label)) : "working";
   const phrase =
     kind === "reading"
-      ? t("Looking things up…")
+      ? t`Looking things up…`
       : kind === "writing"
-        ? t("Writing files…")
+        ? t`Writing files…`
         : kind === "computer"
-          ? t("Using its computer…")
-          : t("Working…");
+          ? t`Using its computer…`
+          : t`Working…`;
   const toolCount = steps.steps.reduce((total, step) => total + step.count, 0);
   const elapsed = message.createdAt
     ? formatCompactDuration(Date.now() - Date.parse(message.createdAt))
@@ -48,7 +50,7 @@ export function LiveActivityLine({
     <View style={{ flexDirection: "row", marginTop: 4, gap: 6 }}>
       <Text style={{ color: tokens.mutedForeground, ...typeScale.caption }}>{phrase}</Text>
       <Text style={{ color: tokens.mutedForeground, ...typeScale.caption }}>
-        {t("{count} tools", { count: toolCount })}
+        {t`${ph({ count: toolCount })} tools`}
       </Text>
       {elapsed ? (
         <Text style={{ color: tokens.mutedForeground, ...typeScale.caption }}>{elapsed}</Text>

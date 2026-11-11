@@ -1,3 +1,4 @@
+import { useLingui } from "@lingui/react/macro";
 import { markdownCodeBlocks } from "@rakazo/chat-ui/native";
 import type { BotAvatarSet, LoginFieldInput, MessageReaction } from "@rakazo/contracts";
 import { canReactToThreadMessage, MESSAGE_REACTIONS } from "@rakazo/contracts";
@@ -16,7 +17,7 @@ import { Platform, View } from "react-native";
 import Animated, { useReducedMotion, ZoomIn } from "react-native-reanimated";
 import type { MobileArtifactTarget } from "../../lib/artifact-open";
 import { canDoubleTapReact } from "../../lib/double-tap";
-import { useI18n } from "../../lib/i18n";
+import { useUiLocale } from "../../lib/i18n";
 import { presentMessageActionSheet } from "../../lib/message-action-sheet";
 import { buildMessageContextMenu, messageMenuReaction } from "../../lib/message-context-menu";
 import { messageHasInlineControls, quotableMessageSegments } from "../../lib/message-presentation";
@@ -144,7 +145,8 @@ export const MessageRow = memo(function MessageRow({
 }: MessageRowProps) {
   const tokens = useMobileTokens();
   const colorScheme = useResolvedAppearance();
-  const { t, locale } = useI18n();
+  const { t } = useLingui();
+  const locale = useUiLocale();
   const artifactTarget = useMemo<MobileArtifactTarget | undefined>(
     () => (groupId ? { groupId } : botId ? { botId } : undefined),
     [botId, groupId],
@@ -206,20 +208,18 @@ export const MessageRow = memo(function MessageRow({
       if (codeBlocks[0]) void Clipboard.setStringAsync(codeBlocks[0]).catch(() => undefined);
     };
     const menuActions = [
-      ...(!readOnly ? [{ name: "reply", text: t("Reply"), onPress: reply }] : []),
-      ...(includeUnread
-        ? [{ name: "unread", text: t("Mark as unread"), onPress: markUnread }]
-        : []),
-      ...(includeQuote ? [{ name: "quote", text: t("Quote"), onPress: quote }] : []),
+      ...(!readOnly ? [{ name: "reply", text: t`Reply`, onPress: reply }] : []),
+      ...(includeUnread ? [{ name: "unread", text: t`Mark as unread`, onPress: markUnread }] : []),
+      ...(includeQuote ? [{ name: "quote", text: t`Quote`, onPress: quote }] : []),
       ...(includeReact
         ? [
             {
               name: "react",
-              text: t("React"),
+              text: t`React`,
               onPress: () =>
                 presentMessageActionSheet({
-                  cancel: t("Cancel"),
-                  more: t("More"),
+                  cancel: t`Cancel`,
+                  more: t`More`,
                   colorScheme,
                   actions: MESSAGE_REACTIONS.map((emoji) => ({
                     text: emoji,
@@ -229,22 +229,22 @@ export const MessageRow = memo(function MessageRow({
             },
           ]
         : []),
-      ...(includeSpeak ? [{ name: "speak", text: t("Speak message"), onPress: speakMessage }] : []),
-      ...(includeSelect ? [{ name: "select", text: t("Select text"), onPress: select }] : []),
-      { name: "copy", text: t("Copy"), onPress: copy },
+      ...(includeSpeak ? [{ name: "speak", text: t`Speak message`, onPress: speakMessage }] : []),
+      ...(includeSelect ? [{ name: "select", text: t`Select text`, onPress: select }] : []),
+      { name: "copy", text: t`Copy`, onPress: copy },
       ...(codeBlocks.length === 1
-        ? [{ name: "copyCode", text: t("Copy code"), onPress: copyCode }]
+        ? [{ name: "copyCode", text: t`Copy code`, onPress: copyCode }]
         : []),
     ];
     const menu = buildMessageContextMenu({
       labels: {
-        reply: t("Reply"),
-        copy: t("Copy"),
-        react: t("React"),
-        quote: t("Quote"),
-        speak: t("Speak message"),
-        select: t("Select text"),
-        unread: t("Mark as unread"),
+        reply: t`Reply`,
+        copy: t`Copy`,
+        react: t`React`,
+        quote: t`Quote`,
+        speak: t`Speak message`,
+        select: t`Select text`,
+        unread: t`Mark as unread`,
       },
       reactions: MESSAGE_REACTIONS,
       include: {
@@ -268,7 +268,7 @@ export const MessageRow = memo(function MessageRow({
               ? [
                   {
                     name: "reply",
-                    text: t("Reply"),
+                    text: t`Reply`,
                     icon: "arrow-undo-outline" as const,
                     onPress: reply,
                   },
@@ -278,7 +278,7 @@ export const MessageRow = memo(function MessageRow({
               ? [
                   {
                     name: "unread",
-                    text: t("Mark as unread"),
+                    text: t`Mark as unread`,
                     icon: "mail-unread-outline" as const,
                     onPress: markUnread,
                   },
@@ -288,7 +288,7 @@ export const MessageRow = memo(function MessageRow({
               ? [
                   {
                     name: "quote",
-                    text: t("Quote"),
+                    text: t`Quote`,
                     icon: "chatbox-ellipses-outline" as const,
                     onPress: quote,
                   },
@@ -296,12 +296,12 @@ export const MessageRow = memo(function MessageRow({
               : []),
           ],
           [
-            { name: "copy", text: t("Copy"), icon: "copy-outline" as const, onPress: copy },
+            { name: "copy", text: t`Copy`, icon: "copy-outline" as const, onPress: copy },
             ...(includeSelect
               ? [
                   {
                     name: "select",
-                    text: t("Select text"),
+                    text: t`Select text`,
                     icon: "text-outline" as const,
                     onPress: select,
                   },
@@ -311,7 +311,7 @@ export const MessageRow = memo(function MessageRow({
               ? [
                   {
                     name: "speak",
-                    text: t("Speak message"),
+                    text: t`Speak message`,
                     icon: "volume-high-outline" as const,
                     onPress: speakMessage,
                   },

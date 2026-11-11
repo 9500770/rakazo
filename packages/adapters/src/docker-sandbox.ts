@@ -16,7 +16,13 @@ import type {
   ScreenSession,
   TerminalRequest,
 } from "@rakazo/adapter-kit";
-import { INVALID_BROWSER_REQUEST, SandboxRequestRejectedError } from "@rakazo/adapter-kit";
+import {
+  INVALID_BROWSER_REQUEST,
+  SandboxDamagedError,
+  SandboxRequestRejectedError,
+  SandboxUnresponsiveError,
+} from "@rakazo/adapter-kit";
+import { COMPUTER_UNRESPONSIVE_ERROR } from "@rakazo/contracts";
 import {
   boundedSandboxCommandTimeoutMs,
   cancelResponseBody,
@@ -32,13 +38,15 @@ import {
   workspaceCwd,
 } from "./computer-support.js";
 import { sandboxCommandArgv } from "./sandbox-command-environment.js";
-import { sandboxNotFoundError } from "./sandbox-errors.js";
+import { isSandboxGoneError, sandboxNotFoundError } from "./sandbox-errors.js";
 import { readBodyCapped, withAbort } from "./web-ssrf.js";
 import { shouldSkipPortableWorkspaceFile } from "./workspace-save-policy.js";
 
 export const MAX_SANDBOX_ERROR_RESPONSE_BYTES = 8 * 1024;
 export const MAX_SANDBOX_SUCCESS_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const SCREEN_RELEASE_TIMEOUT_MS = 8_000;
+/** How long a computer that left a command unanswered gets to run a trivial one. */
+export const HEALTH_CHECK_TIMEOUT_MS = 10_000;
 const SANDBOX_ERROR_RESPONSE_TIMEOUT_MS = 1_000;
 const SANDBOX_SUCCESS_RESPONSE_TIMEOUT_MS = 30_000;
 
@@ -100,6 +108,14 @@ function sandboxGoneError(computer: ComputerRef): Error {
 
 export class DockerSandboxProvider implements SandboxProvider {
   private readonly supervisorToken: string;
+  /**
+   * Computers that left a command unanswered, checked before their next use. The value counts
+   * stalls, so a check that started before a newer stall does not clear it.
+   */
+  private readonly unresponsive = new Map<string, number>();
+  private stalls = 0;
+  /** One check per computer, shared by every caller that needs it meanwhile. */
+  private readonly healthChecks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly supervisorUrl: string,
@@ -179,12 +195,59 @@ export class DockerSandboxProvider implements SandboxProvider {
     };
   }
 
+  /** A command the computer never finished answering, unless the caller stopped waiting itself. */
+  private unansweredCommand(computer: ComputerRef, error: unknown, callerSignal: AbortSignal) {
+    if (callerSignal.aborted) return error;
+    this.stalls += 1;
+    this.unresponsive.set(computer.id, this.stalls);
+    return new SandboxUnresponsiveError(COMPUTER_UNRESPONSIVE_ERROR, { cause: error });
+  }
+
   async isRunning(computer: ComputerRef, context: AdapterContext): Promise<boolean> {
     if (computer.kind !== "docker") return false;
     return (await this.containerRunning(computer, context)) === true;
   }
 
-  async prepare(_computer: ComputerRef, _context: AdapterContext): Promise<void> {}
+  /**
+   * A computer that left a command unanswered runs a trivial one before it is used again. One
+   * that cannot is reported damaged, which has it stopped and started again.
+   */
+  async prepare(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    if (!this.unresponsive.has(computer.id)) return;
+    if (context.signal?.aborted) return withAbort(Promise.resolve(), context.signal);
+    let check = this.healthChecks.get(computer.id);
+    if (!check) {
+      const started = this.checkHealth(computer, context);
+      check = started.finally(() => {
+        if (this.healthChecks.get(computer.id) === check) this.healthChecks.delete(computer.id);
+      });
+      this.healthChecks.set(computer.id, check);
+      // The check can fail after every caller has stopped waiting.
+      void check.catch(() => undefined);
+    }
+    await withAbort(check, context.signal);
+  }
+
+  /** Runs on its own deadline, so one caller stopping does not decide the others' check. */
+  private async checkHealth(computer: ComputerRef, context: AdapterContext): Promise<void> {
+    const stall = this.unresponsive.get(computer.id);
+    const signal = AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS);
+    let healthy = false;
+    try {
+      for await (const event of this.execute(
+        computer,
+        { argv: ["true"], timeoutMs: HEALTH_CHECK_TIMEOUT_MS },
+        { ...context, signal },
+      )) {
+        if (event.type === "exit") healthy = event.code === 0;
+      }
+    } catch (error) {
+      if (isSandboxGoneError(error)) throw error;
+      throw new SandboxDamagedError({ cause: error });
+    }
+    if (!healthy) throw new SandboxDamagedError();
+    if (this.unresponsive.get(computer.id) === stall) this.unresponsive.delete(computer.id);
+  }
 
   async *execute(
     computer: ComputerRef,
@@ -192,6 +255,8 @@ export class DockerSandboxProvider implements SandboxProvider {
     context: AdapterContext,
   ): AsyncIterable<ProcessEvent> {
     const timeoutMs = boundedSandboxCommandTimeoutMs(request.timeoutMs);
+    // The supervisor enforces timeoutMs; this only ends a command it never answers for.
+    const streamSignal = AbortSignal.any([context.signal, AbortSignal.timeout(timeoutMs + 15_000)]);
     const res = await fetch(this.url(`/computers/${computer.id}/exec`), {
       method: "POST",
       headers: { ...this.headers(context, computer.botId), "content-type": "application/json" },
@@ -201,7 +266,9 @@ export class DockerSandboxProvider implements SandboxProvider {
         cwd: workspaceCwd("/home/rakazo", request.cwd),
         timeoutMs,
       }),
-      signal: context.signal,
+      signal: streamSignal,
+    }).catch((error) => {
+      throw this.unansweredCommand(computer, error, context.signal);
     });
     if (!res.ok) {
       cancelResponseBody(res);
@@ -216,12 +283,12 @@ export class DockerSandboxProvider implements SandboxProvider {
     const contentType = res.headers.get("content-type") ?? "";
     if (contentType.includes("ndjson")) {
       // The command may keep running after the first bytes (device-code logins).
-      // Don't apply the short JSON body timeout; the server enforces timeoutMs.
-      const streamSignal = AbortSignal.any([
-        context.signal,
-        AbortSignal.timeout(timeoutMs + 15_000),
-      ]);
-      yield* readNdjsonProcessEvents(res, streamSignal);
+      // Don't apply the short JSON body timeout.
+      try {
+        yield* readNdjsonProcessEvents(res, streamSignal);
+      } catch (error) {
+        throw this.unansweredCommand(computer, error, context.signal);
+      }
       return;
     }
     const body = await readSandboxJson<{ stdout: string; stderr: string; code: number }>(
@@ -563,12 +630,20 @@ export class DockerSandboxProvider implements SandboxProvider {
     }
   }
 
-  async stop(computer: ComputerRef, context: AdapterContext): Promise<void> {
+  async stop(
+    computer: ComputerRef,
+    context: AdapterContext,
+    options?: { discardUnsaved?: boolean },
+  ): Promise<void> {
     const res = await fetch(this.url(`/computers/${computer.id}/stop`), {
       method: "POST",
-      headers: this.headers(context, computer.botId),
+      headers: {
+        ...this.headers(context, computer.botId),
+        ...(options?.discardUnsaved ? { "x-rakazo-discard-unsaved": "1" } : {}),
+      },
       signal: context.signal,
     });
+    if (res.ok || res.status === 404) this.unresponsive.delete(computer.id);
     // 404 means the supervisor no longer has the container, which is the state we want.
     if (!res.ok && res.status !== 404) {
       throw new Error(
@@ -583,6 +658,7 @@ export class DockerSandboxProvider implements SandboxProvider {
       headers: this.headers(context, computer.botId),
       signal: context.signal,
     });
+    if (res.ok || res.status === 404) this.unresponsive.delete(computer.id);
     if (res.ok) return;
     const body = await safeBody(res, context.signal);
     // Only the supervisor's missing-computer answer means already deleted.
