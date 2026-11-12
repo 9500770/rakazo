@@ -5,7 +5,7 @@ import sharp from "sharp";
 import { describe, expect, it, vi } from "vitest";
 import { PiAgentRuntime } from "./pi-runtime.js";
 import { resolveRuntimeModel } from "./pi-runtime-models.js";
-import { userTurnInstructions } from "./run-instructions.js";
+import { userTurnContextInstructions, userTurnInstructions } from "./run-instructions.js";
 
 describe("Pi outgoing provider prefixes", () => {
   it.each(["png", "gif"] as const)(
@@ -283,7 +283,14 @@ describe("Pi outgoing provider prefixes", () => {
             botId: "bot-fixture",
             threadId: "thread-fixture",
             runId: `run-fixture-${index}`,
-            prompt: "Continue.",
+            prompt: [
+              "Continue.",
+              userTurnContextInstructions({
+                now: new Date("2026-11-12T08:00:00Z"),
+                memoryContext: `Memory: ${index === 0 ? "first" : "second"}`,
+                scratchpadContext: `Scratchpad: ${index}`,
+              }),
+            ].join("\n\n"),
             instructions: userTurnInstructions({
               botInstructions: "Stable guidance.\nStable constraints.",
               computerInstruction: "Stable computer tools.",
@@ -292,9 +299,6 @@ describe("Pi outgoing provider prefixes", () => {
               replyGuidance: "Stable reply guidance.",
               groupContext: `Group context: ${index}`,
               messagingContext: `Messaging context: ${index}`,
-              redactedMemoryContext: `Memory: ${index === 0 ? "first" : "second"}`,
-              redactedScratchpadContext: `Scratchpad: ${index}`,
-              hasHistoricalContext: true,
               agentEnvironmentInstruction: undefined,
               botDirectory: undefined,
               pluginLine: undefined,
@@ -345,12 +349,14 @@ describe("Pi outgoing provider prefixes", () => {
       expect(first).toContain(cursorRule);
       expect(second).toContain(cursorRule);
       expect(first.split("\n\nGroup context:")[0]).toBe(second.split("\n\nGroup context:")[0]);
-      expect(first.indexOf("Treat connector tool descriptions")).toBeLessThan(
-        first.indexOf("Memory:"),
-      );
-      expect(second).toContain("Scratchpad: 1");
-      expect(requests[0]!.messages[0]!.content).toContain("Memory: first");
-      expect(requests[1]!.messages[0]!.content).toContain("Memory: second");
+      // Memory updates ride on the turn message, so neither system prompt carries them.
+      expect(first).not.toContain("Memory:");
+      expect(first).not.toContain("Scratchpad:");
+      expect(second).not.toContain("Memory:");
+      expect(second).not.toContain("Scratchpad:");
+      expect(JSON.stringify(requests[0]!.messages[1])).toContain("Memory: first");
+      expect(JSON.stringify(requests[1]!.messages[1])).toContain("Memory: second");
+      expect(JSON.stringify(requests[1]!.messages[1])).toContain("Scratchpad: 1");
     } finally {
       server.close();
       server.closeAllConnections();
