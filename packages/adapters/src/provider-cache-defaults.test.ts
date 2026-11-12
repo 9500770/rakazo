@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { resolvePiCacheRetention } from "./pi-cache-retention.js";
 import { PROVIDER_CACHE_PROFILES, resolveCacheCapabilities } from "./provider-cache-defaults.js";
+
+const chatCompletions = { api: "openai-completions" as const };
 
 describe("provider cache defaults", () => {
   it("gives DeepSeek and Z.AI a long automatic-prefix window with no token floor", () => {
@@ -8,13 +11,31 @@ describe("provider cache defaults", () => {
       expect(notes).toEqual([]);
       expect(cacheCapabilities).toMatchObject({
         scope: "account",
-        retentionMode: "long",
         minimumTokens: 0,
       });
+      expect(cacheCapabilities).not.toHaveProperty("retentionMode");
       expect(cacheCapabilities!.retentionMs).toBeGreaterThanOrEqual(60 * 60 * 1000);
     }
     expect(PROVIDER_CACHE_PROFILES.deepseek!.retentionMs).toBeGreaterThan(
       PROVIDER_CACHE_PROFILES.zai!.retentionMs,
+    );
+  });
+
+  it("omits request-level retention so Chat Completions use timing predictions only", () => {
+    for (const provider of ["deepseek", "zai"]) {
+      const { cacheCapabilities } = resolveCacheCapabilities(provider);
+      expect(cacheCapabilities).not.toHaveProperty("retentionMode");
+      expect(resolvePiCacheRetention(chatCompletions, cacheCapabilities?.retentionMode)).toBe(
+        resolvePiCacheRetention(chatCompletions, undefined),
+      );
+    }
+    const declared = resolveCacheCapabilities("deepseek", {
+      scope: "account",
+      retentionMode: "long",
+    }).cacheCapabilities;
+    expect(declared?.retentionMode).toBe("long");
+    expect(() => resolvePiCacheRetention(chatCompletions, declared?.retentionMode)).toThrow(
+      "Unsupported prompt-cache retention mode",
     );
   });
 

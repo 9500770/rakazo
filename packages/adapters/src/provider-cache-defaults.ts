@@ -22,7 +22,6 @@ export interface ProviderCacheProfile {
   maxRetentionMs: number;
   /** Tokens the provider needs before it caches at all; 0 when there is no documented floor. */
   minimumTokens: number;
-  retentionMode: NonNullable<CacheCapabilities["retentionMode"]>;
 }
 
 export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfile>> = {
@@ -32,7 +31,6 @@ export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfi
     retentionMs: 6 * HOUR,
     maxRetentionMs: 48 * HOUR,
     minimumTokens: 0,
-    retentionMode: "long",
   },
   // Z.AI (GLM) context caching: automatic implicit caching with a "reasonable" validity
   // period that the docs leave unpinned, so stay shorter than DeepSeek's bound.
@@ -40,7 +38,6 @@ export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfi
     retentionMs: 2 * HOUR,
     maxRetentionMs: 24 * HOUR,
     minimumTokens: 0,
-    retentionMode: "long",
   },
 };
 
@@ -53,6 +50,9 @@ export interface CacheCapabilitiesResolution {
 /**
  * Fills in capabilities a connection left unset and rejects declarations the provider
  * cannot honor. A connection that explicitly disables caching keeps that decision.
+ * Request-level `retentionMode` is left unset: these providers cache with no client
+ * marker, and Chat Completions rejects a mode they cannot emit. A connection that
+ * declared a mode keeps it so an unsupported choice still fails validation.
  */
 export function resolveCacheCapabilities(
   provider: string,
@@ -95,7 +95,6 @@ export function resolveCacheCapabilities(
     cacheCapabilities: {
       ...declared,
       scope: declared?.scope ?? "account",
-      retentionMode: profile.retentionMode,
       retentionMs,
       minimumTokens: Math.min(declaredMinimum ?? profile.minimumTokens, profile.minimumTokens),
     },

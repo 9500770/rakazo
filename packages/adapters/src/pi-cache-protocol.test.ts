@@ -5,6 +5,7 @@ import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.l
 import { describe, expect, it, vi } from "vitest";
 import { requestedPiCacheWriteRetention, resolvePiCacheRetention } from "./pi-cache-retention.js";
 import { observedPiStream } from "./pi-usage.js";
+import { resolveCacheCapabilities } from "./provider-cache-defaults.js";
 
 const model: Model<Api> = {
   provider: "fixture",
@@ -146,6 +147,20 @@ describe("installed Pi cache protocol controls", () => {
       expect(events).not.toHaveBeenCalled();
     },
   );
+  it("sends DeepSeek Chat Completions on the default cache profile without a retention field", async () => {
+    const { cacheCapabilities } = resolveCacheCapabilities("deepseek");
+    expect(cacheCapabilities).not.toHaveProperty("retentionMode");
+    const chat = { ...model, api: "openai-completions" as const, provider: "deepseek" };
+    expect(resolvePiCacheRetention(chat, cacheCapabilities?.retentionMode)).toBe("short");
+    const payload = await outgoing(
+      openAICompletionsApi(),
+      chat,
+      cacheCapabilities?.retentionMode,
+      true,
+    );
+    expect(payload).not.toHaveProperty("prompt_cache_retention");
+    expect(payload).not.toHaveProperty("prompt_cache_options");
+  });
   it("keeps generic connection defaults authoritative when the SDK environment requests long retention", async () => {
     vi.stubEnv("PI_CACHE_RETENTION", "long");
     try {
