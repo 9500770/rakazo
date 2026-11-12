@@ -14,6 +14,10 @@ const HOUR = 60 * MINUTE;
  * the last few exchanges — and pruning rewrites the very prefix that would have hit.
  * The cost is asymmetric: predicting warm when the cache expired re-sends a prefix at full
  * price, while predicting cold when it is warm guarantees a miss.
+ *
+ * A profile deliberately has no `retentionMode`: these caches are automatic, so no request
+ * field could extend or qualify them, and an auto-written mode would be a request-level
+ * control (`resolvePiCacheRetention`) the provider rejects. Timing predictions only.
  */
 export interface ProviderCacheProfile {
   /** Conservative lower bound of the provider's documented retention. */
@@ -22,7 +26,6 @@ export interface ProviderCacheProfile {
   maxRetentionMs: number;
   /** Tokens the provider needs before it caches at all; 0 when there is no documented floor. */
   minimumTokens: number;
-  retentionMode: NonNullable<CacheCapabilities["retentionMode"]>;
 }
 
 export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfile>> = {
@@ -32,7 +35,6 @@ export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfi
     retentionMs: 6 * HOUR,
     maxRetentionMs: 48 * HOUR,
     minimumTokens: 0,
-    retentionMode: "long",
   },
   // Z.AI (GLM) context caching: automatic implicit caching with a "reasonable" validity
   // period that the docs leave unpinned, so stay shorter than DeepSeek's bound.
@@ -40,7 +42,6 @@ export const PROVIDER_CACHE_PROFILES: Readonly<Record<string, ProviderCacheProfi
     retentionMs: 2 * HOUR,
     maxRetentionMs: 24 * HOUR,
     minimumTokens: 0,
-    retentionMode: "long",
   },
 };
 
@@ -93,9 +94,10 @@ export function resolveCacheCapabilities(
   }
   return {
     cacheCapabilities: {
+      // A declared retentionMode passes through untouched; the profile adds none because
+      // an automatic cache has no request-level control to request.
       ...declared,
       scope: declared?.scope ?? "account",
-      retentionMode: profile.retentionMode,
       retentionMs,
       minimumTokens: Math.min(declaredMinimum ?? profile.minimumTokens, profile.minimumTokens),
     },

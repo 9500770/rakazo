@@ -1,21 +1,40 @@
 import { describe, expect, it } from "vitest";
+import { resolvePiCacheRetention } from "./pi-cache-retention.js";
 import { PROVIDER_CACHE_PROFILES, resolveCacheCapabilities } from "./provider-cache-defaults.js";
 
+const deepseekChat = { api: "openai-completions" as const };
+
 describe("provider cache defaults", () => {
-  it("gives DeepSeek and Z.AI a long automatic-prefix window with no token floor", () => {
+  it("gives DeepSeek and Z.AI their automatic-prefix timing window with no request-level mode", () => {
     for (const provider of ["deepseek", "zai"]) {
       const { cacheCapabilities, notes } = resolveCacheCapabilities(provider);
       expect(notes).toEqual([]);
       expect(cacheCapabilities).toMatchObject({
         scope: "account",
-        retentionMode: "long",
         minimumTokens: 0,
       });
-      expect(cacheCapabilities!.retentionMs).toBeGreaterThanOrEqual(60 * 60 * 1000);
+      // An automatic cache has no request-level retention control; auto-writing one is a
+      // mode these Chat Completions endpoints reject in resolvePiCacheRetention.
+      expect(cacheCapabilities!.retentionMode).toBeUndefined();
+      expect(() =>
+        resolvePiCacheRetention(deepseekChat, cacheCapabilities?.retentionMode),
+      ).not.toThrow();
     }
+    expect(PROVIDER_CACHE_PROFILES.deepseek!.retentionMs).toBe(6 * 60 * 60 * 1000);
+    expect(PROVIDER_CACHE_PROFILES.zai!.retentionMs).toBe(2 * 60 * 60 * 1000);
     expect(PROVIDER_CACHE_PROFILES.deepseek!.retentionMs).toBeGreaterThan(
       PROVIDER_CACHE_PROFILES.zai!.retentionMs,
     );
+  });
+
+  it("passes a connection's declared retention mode through untouched", () => {
+    const { cacheCapabilities } = resolveCacheCapabilities("deepseek", {
+      scope: "account",
+      retentionMode: "long",
+    });
+    expect(cacheCapabilities!.retentionMode).toBe("long");
+    // Validation stays the authority: an unsupported manual mode on Chat Completions throws.
+    expect(() => resolvePiCacheRetention(deepseekChat, "long")).toThrow("Unsupported");
   });
 
   it("raises a copied five-minute window instead of pruning the prefix five minutes in", () => {

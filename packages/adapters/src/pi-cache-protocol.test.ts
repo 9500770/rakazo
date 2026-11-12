@@ -198,6 +198,10 @@ describe("installed Pi cache protocol controls", () => {
   });
   it("accepts audited controls and leaves omitted capabilities on the adapter default", () => {
     expect(resolvePiCacheRetention(model, undefined)).toBe("short");
+    // A default cache profile omits retentionMode; Chat Completions must resolve, not throw.
+    expect(resolvePiCacheRetention({ ...model, api: "openai-completions" }, undefined)).toBe(
+      "short",
+    );
     expect(resolvePiCacheRetention({ ...model, api: "openai-completions" }, "short")).toBe("short");
     expect(
       resolvePiCacheRetention(
