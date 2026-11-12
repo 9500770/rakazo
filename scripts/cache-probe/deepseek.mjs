@@ -2,10 +2,13 @@
 /**
  * Live probe: does DeepSeek's automatic prefix cache actually depend on byte-stable prefixes?
  *
- * Same 6-turn conversation, three prompt layouts:
+ * Same conversation, four prompt layouts:
  *   A1 legacy-state-in-system : dynamic runtime state appended to the SYSTEM prompt
  *   A2 legacy-state+tool-change: A1 plus the tool list changes when a device drops offline
- *   B  fixed                   : system + tools constant, state appended to the USER turn
+ *   B  fixed (PRODUCTION)      : state appended to this turn's USER message; history is
+ *                                replayed raw, because the stored message never contains it
+ *   B2 fixed+persisted         : same, but history replays the suffix too (models
+ *                                "persist the injection in the transcript")
  *
  * At turn 4 a laptop flips to disconnected (the event our fix is about).
  * Reports real usage.prompt_cache_hit_tokens / prompt_cache_miss_tokens per turn.
@@ -106,20 +109,24 @@ async function runVariant(key, variant) {
     const offline = turn >= FLIP_TURN;
     let messages;
     let tools;
-    if (variant === "B") {
+    const question = `Question ${turn}: summarise what we have covered so far in one sentence.`;
+    const suffix = `\n\n[runtime] user computers: ${devices(offline)}`;
+    if (variant === "B" || variant === "B2") {
       messages = [{ role: "system", content: `[probe ${tag}]\n${STATIC}` }, ...history,
-        { role: "user", content: `Question ${turn}: summarise what we have covered so far in one sentence.\n\n[runtime] user computers: ${devices(offline)}` }];
+        { role: "user", content: question + suffix }];
       tools = [TOOL_SHELL, TOOL_OBSERVE];
     } else {
       messages = [{ role: "system", content: `[probe ${tag}]\n${STATIC}\n\n## Runtime state\nuser computers: ${devices(offline)}` }, ...history,
-        { role: "user", content: `Question ${turn}: summarise what we have covered so far in one sentence.` }];
+        { role: "user", content: question }];
       tools = variant === "A2" && offline ? [TOOL_SHELL] : [TOOL_SHELL, TOOL_OBSERVE];
     }
     const r = await call(key, { model: MODEL, messages, tools, max_tokens: 32, temperature: 0, stream: false });
     const u = usage(r);
     const answer = r.choices?.[0]?.message?.content ?? "";
     rows.push({ turn, offline, ...u });
-    history.push({ role: "user", content: messages[messages.length - 1].content });
+    // Production replays the stored message, which does not contain the runtime suffix.
+    // B2 keeps it, to measure what persisting the injection would buy.
+    history.push({ role: "user", content: variant === "B2" ? question + suffix : question });
     history.push({ role: "assistant", content: `${answer} ${filler(turn)}`.trim() });
   }
   return rows;
@@ -127,14 +134,14 @@ async function runVariant(key, variant) {
 
 const key = loadKey();
 const out = {};
-for (const variant of ["A1", "A2", "B"]) out[variant] = await runVariant(key, variant);
+for (const variant of ["A1", "A2", "B", "B2"]) out[variant] = await runVariant(key, variant);
 
 console.log(`model=${MODEL} turns=${TURNS} flip=${FLIP_TURN} tag=${RUN_TAG}`);
 for (const [variant, rows] of Object.entries(out)) {
   const prompt = rows.reduce((s, r) => s + r.prompt, 0);
   const hit = rows.reduce((s, r) => s + r.hit, 0);
   const miss = rows.reduce((s, r) => s + r.miss, 0);
-  const label = { A1: "legacy: state in system", A2: "legacy: state in system + tool list change", B: "fixed: state in user turn" }[variant];
+  const label = { A1: "legacy: state in system", A2: "legacy: state in system + tool list change", B: "fixed: state in user turn (production)", B2: "fixed + persisted injection" }[variant];
   console.log(`\n${variant}  ${label}`);
   console.log("  turn  prompt   hit    miss   hitrate  event");
   for (const r of rows) {
