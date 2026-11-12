@@ -46,6 +46,7 @@ import { codexLiveModel } from "./pi-codex-catalog.js";
 import { toOAuthCredential } from "./pi-credentials.js";
 import { LOCAL_PROVIDER_ID } from "./pi-local-provider.js";
 import { CHATGPT_OAUTH_PROVIDER, isRetiredModelCredentialError } from "./pi-oauth.js";
+import { resolveCacheCapabilities } from "./provider-cache-defaults.js";
 
 export function runtimeFallbackModel(runtime: AgentRuntime) {
   return runtime.describe().capabilities.scripted ? { provider: "scripted", id: "scripted" } : null;
@@ -392,10 +393,20 @@ async function resolveModelKeyMaterial(
   return { apiKey: deploymentKeyFor(deps, provider), redact: [] };
 }
 
-/** Translate resolved credentials and capabilities consistently for every run path. */
+/**
+ * Translate resolved credentials and capabilities consistently for every run path.
+ * Providers that cache prefixes without a client marker get their retention window here,
+ * so a connection that never declared one still reuses its prefix instead of pruning it.
+ */
 export function resolvedModelRunFields(
   resolved: Awaited<ReturnType<typeof resolveModelKey>>,
+  provider: string,
 ): Omit<AgentRunRequest["model"], "provider" | "id" | "connectionId" | "thinkingLevel"> {
+  const { cacheCapabilities } = resolveCacheCapabilities(
+    provider,
+    resolved.cacheCapabilities,
+    resolved.apiProtocol,
+  );
   return {
     apiKey: resolved.oauth ? undefined : resolved.apiKey,
     callObserver: resolved.callObserver,
@@ -405,7 +416,7 @@ export function resolvedModelRunFields(
     apiProtocol: resolved.apiProtocol,
     headers: resolved.headers,
     allowPrivateEndpoint: resolved.allowPrivateEndpoint,
-    cacheCapabilities: resolved.cacheCapabilities,
+    cacheCapabilities,
     contextWindow: resolved.contextWindow,
     reasoning: resolved.reasoning,
     maxTokens: resolved.maxTokens,
@@ -494,7 +505,7 @@ export async function resolveConnectedRunModel(
     provider,
     id: modelId,
     ...(credentialId ? { connectionId: credentialId } : {}),
-    ...resolvedModelRunFields(resolved),
+    ...resolvedModelRunFields(resolved, provider),
     thinkingLevel:
       ((thinkingLevel !== undefined
         ? thinkingLevel
@@ -569,7 +580,7 @@ export async function resolveRunModel(
   return {
     provider,
     id,
-    ...resolvedModelRunFields(resolved),
+    ...resolvedModelRunFields(resolved, provider),
     thinkingLevel: thinkingLevel ?? resolved.thinkingLevel ?? null,
   };
 }

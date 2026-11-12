@@ -1171,7 +1171,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           provider: runModelProvider,
           id: runModelId,
           ...(credential ? { connectionId: credential.id } : {}),
-          ...resolvedModelRunFields(resolved),
+          ...resolvedModelRunFields(resolved, runModelProvider),
           thinkingLevel: thinkingLevel ?? resolved.thinkingLevel ?? null,
         };
         // Saved identities win on resume, including when the setting was cleared meanwhile.
