@@ -316,6 +316,7 @@ function fixture({
   let outsideSteering = false;
   let offeredTools: string[] = [];
   let instructions = "";
+  let turnPrompt = "";
   let checkpointCapture:
     | { executionId: string; checkpoint: Omit<TurnCheckpoint, "provider" | "model"> }
     | undefined;
@@ -515,6 +516,7 @@ function fixture({
   const runtimeRun = vi.fn(async function* (request: AgentRunRequest) {
     offeredTools = request.tools.map((tool) => tool.name);
     instructions = request.instructions ?? "";
+    turnPrompt = request.prompt;
     if (checkpointCapture) {
       // The runtime hands the executor a capture it can serialize when the turn pauses.
       const pending = checkpointCapture;
@@ -647,6 +649,7 @@ function fixture({
     },
     offeredTools: () => offeredTools,
     instructions: () => instructions,
+    turnPrompt: () => turnPrompt,
     cancelAtInstructionCommit() {
       transactionalPrisma.$queryRaw.mockImplementation(async (...values: unknown[]) => {
         if (String(values[0]).includes("FROM threads")) run.status = "cancelled";
@@ -3431,13 +3434,24 @@ describe("user_computer_shell", () => {
   it.each([
     ["paired but offline", true],
     ["not paired", false],
-  ])("tells the bot how to connect the owner's computer when it is %s", async (_label, paired) => {
-    const { gateway } = devices(false, paired);
-    const f = fixture({ ...ownRun, trigger: "follow_up", userDevices: gateway });
+  ])(
+    "keeps the computer tool when the desktop is %s, and reports it per turn",
+    async (_label, paired) => {
+      const { gateway } = devices(false, paired);
+      const f = fixture({ ...ownRun, trigger: "follow_up", userDevices: gateway });
+      await f.run();
+      // A tool list that follows the connection would drop the entire cached prompt, so the
+      // tool stays offered and the state travels with the turn's message instead.
+      expect(f.offeredTools()).toContain("user_computer_shell");
+      expect(f.instructions()).not.toContain(offlineLine);
+      expect(f.turnPrompt()).toContain("not connected right now");
+    },
+  );
+
+  it("still offers the computer tool to a disconnected desktop", async () => {
+    const f = fixture({ ...ownRun, userDevices: devices(false).gateway });
     await f.run();
-    expect(f.offeredTools()).not.toContain("user_computer_shell");
-    expect(f.instructions()).toContain(offlineLine);
-    expect(f.instructions()).not.toContain(line);
+    expect(f.offeredTools()).toContain("user_computer_shell");
   });
 
   it.each<[string, Parameters<typeof fixture>[0]]>([
@@ -3458,7 +3472,6 @@ describe("user_computer_shell", () => {
 
   it.each<[string, Parameters<typeof fixture>[0]]>([
     ["no desktop gateway", {}],
-    ["a disconnected desktop", { userDevices: devices(false).gateway }],
     [
       "a disabled tool",
       { userDevices: devices().gateway, disabledBuiltinTools: ["user_computer_shell"] },

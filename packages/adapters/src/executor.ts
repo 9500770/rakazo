@@ -139,6 +139,7 @@ import {
   persistentComputerInstruction,
   runIdentityInstruction,
   threadContextForRun,
+  userComputerTurnInstruction,
   userTurnInstructions,
   voiceCallInstruction,
 } from "./run-instructions.js";
@@ -224,7 +225,7 @@ import { loadAgentTicketContext } from "./ticket-context.js";
 import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
 import { restoreTurnCheckpoint } from "./turn-checkpoint.js";
-import { onlineUserComputers } from "./user-device-alias.js";
+import { onlineUserComputers, pairedUserComputers, userDevicePicker } from "./user-device-alias.js";
 import { createWebProvider } from "./web-provider-factory.js";
 
 /** Same reach as the MCP connector: usable servers assigned to the bot or shared with every bot. */
@@ -1243,20 +1244,31 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           runUserId: run.userId,
           botUserId: bot.userId,
         });
+        // Offered whenever the owner's desktop could be reached, whatever it is doing now: the
+        // tool list must not change when a desktop connects or disconnects, because a tool-list
+        // change invalidates the entire cached prompt. Unreachable calls fail with a message
+        // the model can act on instead.
+        const userDevices = deps.userDevices;
+        const userComputerOffered = Boolean(
+          userComputerOwnerId && userDevices && !disabledBuiltinTools.has(USER_COMPUTER_SHELL_TOOL),
+        );
         let userComputer: UserComputerState;
         let userComputerScreen = false;
-        if (
-          userComputerOwnerId &&
-          deps.userDevices &&
-          !disabledBuiltinTools.has(USER_COMPUTER_SHELL_TOOL)
-        ) {
-          const onlineDevices = await onlineUserComputers(deps.userDevices, userComputerOwnerId);
+        if (userComputerOffered && userComputerOwnerId && userDevices) {
+          const onlineDevices = await onlineUserComputers(userDevices, userComputerOwnerId);
           userComputer = onlineDevices.length
             ? { status: "connected", devices: onlineDevices }
             : { status: "offline" };
-          // The macOS and Windows desktops fetch a screen driver; Linux has none yet.
-          userComputerScreen =
-            onlineDevices[0]?.platform === "darwin" || onlineDevices[0]?.platform === "win32";
+          // Screen control exists only for macOS and Windows desktops. Decided from paired
+          // devices, never the online ones: a laptop that disconnects must not change the
+          // tool list, because that drops the whole cached prompt.
+          const pairedAll = userDevicePicker(userDevices)?.pairedAll;
+          const screenDevices = pairedAll
+            ? await pairedUserComputers(userDevices, userComputerOwnerId)
+            : onlineDevices;
+          userComputerScreen = screenDevices.some(
+            (device) => device.platform === "darwin" || device.platform === "win32",
+          );
         }
         const builtins = [
           ...selectBuiltinToolsForRun({
@@ -1284,7 +1296,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               : bot.disabledBuiltinTools,
             fleetManagement: bot.fleetManagement,
             followUpFromUser: sourceMessage?.role === "user",
-            userComputer: userComputer?.status === "connected",
+            userComputer: userComputerOffered,
             userComputerScreen,
             emailInbox,
             emailClaimable:
@@ -1615,6 +1627,8 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           voiceCall && !callEndRun ? voiceCallInstruction(disabledBuiltinTools) : undefined,
           // Per-turn, not in the system prompt: the timestamp changes every call and would break the cacheable prefix.
           formatCurrentTimeInstruction(deps.now?.() ?? new Date(), userTimeZone),
+          // Same reason: connection state changes when a desktop connects or disconnects.
+          userComputerTurnInstruction(userComputer),
           lateRoutineNote,
           sharedSpaceNote,
         ]
