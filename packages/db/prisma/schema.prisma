@@ -2497,11 +2497,6 @@ model ExternalMessage {
   run                    Run?                 @relation(fields: [runId], references: [id], onDelete: SetNull)
   threadMessageId        String?              @unique
   threadMessage          Message?             @relation(fields: [threadMessageId], references: [id], onDelete: SetNull)
-  attempts               Int                  @default(0)
-  nextAttemptAt          DateTime?
-  lastError              String?
-  providerReplyHandle    String?
-  deliveredAt            DateTime?
   createdAt              DateTime             @default(now())
   updatedAt              DateTime             @updatedAt
 
