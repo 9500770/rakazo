@@ -68,25 +68,38 @@ vi.mock("@rakazo/ui-web", async (importOriginal) => ({
       {children}
     </button>
   ),
-  ToggleGroup: ({ children }: { children?: ReactNode }) => <div>{children}</div>,
-  ToggleGroupItem: ({ children }: { children?: ReactNode }) => (
-    <button type="button">{children}</button>
-  ),
+  ToggleGroup: (await importOriginal<typeof UiWeb>()).ToggleGroup,
+  ToggleGroupItem: (await importOriginal<typeof UiWeb>()).ToggleGroupItem,
   OptionSelect: ({ "data-testid": testId }: { "data-testid"?: string }) => (
     <div data-testid={testId} />
   ),
   cn: (...values: unknown[]) => values.filter(Boolean).join(" "),
 }));
 
+vi.mock("../lib/auth-capabilities", () => ({
+  fetchAuthCapabilities: vi.fn(async () => ({
+    providers: [{ id: "social-one", name: "Provider" }],
+  })),
+}));
+vi.mock("../lib/passkeys", () => ({
+  usePasskeysSupported: () => false,
+  usePasskeysVersion: () => 0,
+}));
 const accountPolicy = vi.hoisted(() => ({
+  hasPassword: true,
+  linkedProviderIds: undefined as string[] | undefined,
   passwordChangeEnabled: undefined as boolean | undefined,
 }));
 vi.mock("../components/AccountAccess", () => ({
+  LinkSsoRow: ({ provider }: { provider: { name: string } }) => (
+    <button type="button">Link {provider.name}</button>
+  ),
   AccountAccess: ({ onSecurity }: { onSecurity: (value: AccountSecurity) => void }) => {
     useEffect(
       () =>
         onSecurity({
-          hasPassword: true,
+          hasPassword: accountPolicy.hasPassword,
+          linkedProviderIds: accountPolicy.linkedProviderIds,
           passwordChangeEnabled: accountPolicy.passwordChangeEnabled,
           freshOidcAuth: false,
           ssoLinked: false,
@@ -672,3 +685,49 @@ it("closes the name editor before refresh finishes and ignores a refresh failure
     await editor.cleanup();
   }
 });
+
+it("keeps bot style available without a saved value and saves an explicit Original choice", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const onChange = vi.fn(async () => {});
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => {
+      root.render(<GeneralSettingsPanels name="Tester" onBotAvatarSetChange={onChange} />);
+    });
+    const picker = container.querySelector('[data-testid="bot-style-select"]');
+    expect(picker).not.toBeNull();
+    const original = Array.from(picker!.querySelectorAll("button")).find(
+      (button) => button.textContent === "Original",
+    )!;
+    expect(original.getAttribute("aria-pressed")).toBe("false");
+    await act(async () => original.click());
+    expect(onChange).toHaveBeenCalledWith("organic");
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  }
+});
+
+it.each([undefined, ["social-one"], []])(
+  "gates the Security group on loaded, available contents (%s)",
+  async (linkedProviderIds) => {
+    accountPolicy.hasPassword = false;
+    accountPolicy.linkedProviderIds = linkedProviderIds;
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<GeneralSettingsPanels name="Test" />));
+      expect(container.textContent?.includes("Security")).toBe(linkedProviderIds?.length === 0);
+      expect(container.textContent?.includes("Link Provider")).toBe(
+        linkedProviderIds?.length === 0,
+      );
+    } finally {
+      await act(async () => root.unmount());
+      accountPolicy.hasPassword = true;
+      accountPolicy.linkedProviderIds = undefined;
+    }
+  },
+);
