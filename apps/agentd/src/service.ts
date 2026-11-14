@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -7,6 +8,19 @@ import { fileURLToPath } from "node:url";
 import { agentHome, logPath } from "./config.js";
 
 const exec = promisify(execFile);
+
+/**
+ * The interpreter launchd/systemd should run. Homebrew's node lives in a versioned Cellar path that
+ * a `brew upgrade` deletes, so prefer the stable symlink next to it; RAKAZO_NODE overrides both.
+ */
+function nodeBin(): string {
+  const explicit = process.env.RAKAZO_NODE;
+  if (explicit) return explicit;
+  const p = process.execPath;
+  const stable = p.replace(/\/Cellar\/[^/]+\/[^/]+\/bin\//, "/bin/");
+  return stable !== p && existsSync(stable) ? stable : p;
+}
+
 
 export const SERVICE_LABEL = "dev.rakazo.agentd";
 
@@ -53,7 +67,7 @@ function launchdPlist(): string {
   <key>Label</key><string>${SERVICE_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${escapeXml(process.execPath)}</string>
+    <string>${escapeXml(nodeBin())}</string>
     <string>${escapeXml(scriptPath())}</string>
     <string>run</string>
   </array>
@@ -82,7 +96,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${quote(process.execPath)} ${quote(scriptPath())} run
+ExecStart=${quote(nodeBin())} ${quote(scriptPath())} run
 Restart=on-failure
 RestartSec=10
 # 77: the owner removed this computer. 78: setup is needed. Neither fixes itself by restarting.
