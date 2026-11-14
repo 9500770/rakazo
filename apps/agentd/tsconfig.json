@@ -1,0 +1,34 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "noEmit": true,
+    "paths": {
+      "@rakazo/adapters/*": [
+        "../../packages/adapters/src/*.ts"
+      ],
+      "@rakazo/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ],
+      "@rakazo/contracts/*": [
+        "../../packages/contracts/src/*.ts"
+      ],
+      "@rakazo/core": [
+        "../../packages/core/src/index.ts"
+      ],
+      "@rakazo/core/*": [
+        "../../packages/core/src/*.ts"
+      ],
+      "@rakazo/adapter-kit": [
+        "../../packages/adapter-kit/src/index.ts"
+      ]
+    },
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
