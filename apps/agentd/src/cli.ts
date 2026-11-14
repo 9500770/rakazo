@@ -46,6 +46,7 @@ setup options:
   --name <name>      Name shown in the server's computer list (default: hostname)
   --remember         Keep the password locally so a lapsed sign-in pairs itself again
   --auto|--ask|--deny  Access mode for this computer (default: ask)
+  --password-file <path>  Read the password from a file (one line, whitespace kept as-is)
   --password-stdin   Read the password from stdin (CI, containers)`;
 
 function parseFlags(argv: string[]): Map<string, string | true> {
@@ -83,6 +84,14 @@ async function ask(label: string): Promise<string> {
   }
 }
 
+/** Removes escape sequences and control noise a terminal inserts around pasted input. */
+function stripTerminalNoise(input: string): string {
+  return input
+    .replace(/\u001b\[20[01]~/g, "")
+    .replace(/\u001b\[[0-9;]*[A-Za-z~]/g, "")
+    .replace(/\u001b./g, "");
+}
+
 /** Reads a password without echoing it, and without it ever reaching a shell history. */
 function askHidden(label: string): Promise<string> {
   if (!process.stdin.isTTY) return ask(label);
@@ -99,7 +108,11 @@ function askHidden(label: string): Promise<string> {
       stdin.off("data", onData);
       process.stdout.write("\n");
     };
-    const onData = (chunk: string) => {
+    const onData = (raw: string) => {
+      // Terminals in raw mode still wrap pasted text in bracketed-paste markers
+      // (ESC[200~ … ESC[201~). Left in place they become part of the password and
+      // the sign-in fails with a misleading "wrong email or password".
+      const chunk = stripTerminalNoise(raw);
       for (const character of chunk) {
         if (character === "\r" || character === "\n") {
           stop();
@@ -143,9 +156,12 @@ async function setup(flags: Map<string, string | true>): Promise<number> {
     process.stderr.write("An account email is needed to pair this computer.\n");
     return 2;
   }
-  const password = flags.has("password-stdin")
-    ? (await ask("")).trim() || process.env.RAKAZO_PASSWORD || ""
-    : process.env.RAKAZO_PASSWORD ?? (await askHidden("Password: "));
+  const passwordFile = text(flags, "password-file");
+  const password = passwordFile
+    ? (await readFile(passwordFile, "utf8")).replace(/\r?\n$/, "")
+    : flags.has("password-stdin")
+      ? (await ask("")).trim() || process.env.RAKAZO_PASSWORD || ""
+      : process.env.RAKAZO_PASSWORD ?? (await askHidden("Password: "));
   if (!password) {
     process.stderr.write("A password is needed to pair this computer.\n");
     return 2;
