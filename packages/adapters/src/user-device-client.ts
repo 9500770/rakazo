@@ -30,7 +30,15 @@ export interface UserDeviceClientOptions {
   /** Whether this computer lets the server's bots run anything. Asked before every request. */
   authorize: () => Promise<boolean>;
   retryMs?: { min: number; max: number };
+  /** Connection lifecycle, so a caller can report an outage instead of leaving it silent. */
+  onEvent?: (event: UserDeviceClientEvent) => void;
 }
+
+/** What happened to the socket. The caller decides how loudly to say it. */
+export type UserDeviceClientEvent =
+  | { type: "connected"; afterMs: number | null }
+  | { type: "disconnected"; reason: string }
+  | { type: "retry"; attempt: number; delayMs: number; reason: string };
 
 /**
  * Connects outbound to a Rakazo server so its bots can use this computer. The server never
@@ -47,6 +55,9 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   let stopped = false;
   let attempt = 0;
+  // Kept so the caller can say how long it was down and why the last attempt failed.
+  let lastConnectedAt = 0;
+  let lastReason = "";
   let socket: WebSocket | undefined;
   let reconnectTimer: NodeJS.Timeout | undefined;
   let refuseWaiting: (() => void) | undefined;
@@ -76,8 +87,10 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
     if (stopped) return;
     // Full jitter keeps many devices from reconnecting in lockstep after a server restart.
     const ceiling = Math.min(retry.max, retry.min * 2 ** attempt);
+    const delay = Math.round(retry.min / 2 + Math.random() * ceiling);
     attempt += 1;
-    reconnectTimer = setTimeout(connect, retry.min / 2 + Math.random() * ceiling);
+    options.onEvent?.({ type: "retry", attempt, delayMs: delay, reason: lastReason });
+    reconnectTimer = setTimeout(connect, delay);
     reconnectTimer.unref();
   }
 
@@ -115,6 +128,10 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
     });
     ws.on("open", () => {
       openedAt = Date.now();
+      const afterMs = lastConnectedAt ? openedAt - lastConnectedAt : null;
+      lastConnectedAt = openedAt;
+      lastReason = "";
+      options.onEvent?.({ type: "connected", afterMs });
       // A silent network drop otherwise leaves the device looking connected for hours.
       ping = setInterval(() => {
         if (!alive) {
@@ -129,10 +146,11 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
     ws.on("pong", () => {
       alive = true;
     });
-    ws.on("error", () => {
-      /* "close" follows and reconnects. */
+    ws.on("error", (error) => {
+      // "close" follows and reconnects; keep the reason so the caller's log can say why.
+      lastReason = error instanceof Error ? error.message : String(error);
     });
-    ws.on("close", () => {
+    ws.on("close", (code) => {
       clearInterval(ping);
       // A lost response is never retried, so in-flight work stops with the connection.
       for (const { call } of calls.values()) call.abort();
@@ -142,6 +160,9 @@ export function startUserDeviceClient(options: UserDeviceClientOptions) {
         refuseWaiting = undefined;
       }
       if (openedAt && Date.now() - openedAt >= PING_INTERVAL_MS) attempt = 0;
+      // Only a connection that actually opened counts as lost; a refused handshake is just a retry.
+      if (!stopped && openedAt)
+        options.onEvent?.({ type: "disconnected", reason: lastReason || `socket closed (${code})` });
       scheduleReconnect();
     });
     ws.on("message", (data, isBinary) => {

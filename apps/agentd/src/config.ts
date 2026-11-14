@@ -61,7 +61,8 @@ export interface AgentConfig {
 }
 
 const MAX_CONFIG_BYTES = 64 * 1024;
-const DEFAULT_RETRY = { min: 1_000, max: 60_000 };
+/** Quick at first, then one attempt every minute or two while the server stays away. */
+const DEFAULT_RETRY = { min: 5_000, max: 120_000 };
 
 /** `RAKAZO_AGENT_HOME` keeps a second agent (or a test) beside the real one. */
 export function agentHome(): string {

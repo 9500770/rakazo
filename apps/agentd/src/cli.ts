@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { secureHttpOrigin } from "@rakazo/contracts/network-host";
@@ -24,7 +25,13 @@ async function exists(file: string): Promise<boolean> {
   );
 }
 import { runAgent } from "./daemon.js";
-import { installService, uninstallService } from "./service.js";
+import {
+  clearPids,
+  installService,
+  supervisorPid,
+  uninstallService,
+  writePortableRunner,
+} from "./service.js";
 
 const USAGE = `rakazo-agentd — a Rakazo host agent with no window
 
@@ -37,8 +44,13 @@ const USAGE = `rakazo-agentd — a Rakazo host agent with no window
   pause     Refuse bot requests without stopping the agent
   resume    Lift pause
   logout    Revoke this computer's token and forget the local setup
-  install   Install and start the login service (launchd on macOS, systemd on Linux)
-  uninstall Stop and remove that service
+  start     Run it in the background now: no launchd, no systemd, only sh
+  stop      Stop that background process
+  install   Start it at login: launchd on macOS, systemd on Linux, cron @reboot as the fallback
+  uninstall Stop it at login and remove whatever install wrote
+
+install options:
+  --portable         Use the portable background runner even where launchd/systemd exist
 
 setup options:
   --server <url>     Rakazo server, e.g. https://app.rakazo.com
@@ -212,10 +224,7 @@ async function status(): Promise<number> {
     process.stdout.write(`Not set up. Configuration: ${configPath()}\n`);
     return 1;
   }
-  const running = await access(pidPath()).then(
-    () => true,
-    () => false,
-  );
+  const running = (await runningPid()) !== null;
   const approval = Date.parse((await readFile(unlockPath(), "utf8").catch(() => "")).trim());
   const approved = Number.isFinite(approval) && approval > Date.now();
   process.stdout.write(
@@ -302,6 +311,94 @@ async function lock(): Promise<number> {
   return 0;
 }
 
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => void setTimeout(resolve, ms));
+
+/** The agent's pid when one is alive; a crash leaves the file behind, so the signal decides. */
+async function runningPid(): Promise<number | null> {
+  const pid = Number((await readFile(pidPath(), "utf8").catch(() => "")).trim());
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  return alive(pid) ? pid : null;
+}
+
+/**
+ * Starts the agent in the background with no service manager: a detached `sh` keeps it running and
+ * restarts it after a crash. Same code path on macOS, Linux and the BSDs.
+ */
+async function startBackground(): Promise<number> {
+  const config = await readConfig();
+  if (!config?.device) {
+    process.stderr.write("Not set up yet. Run: rakazo-agentd setup\n");
+    return 1;
+  }
+  const already = await runningPid();
+  if (already) {
+    process.stdout.write(`Already running (pid ${already}). Log: ${logPath()}\n`);
+    return 1;
+  }
+  const supervisor = await supervisorPid();
+  if (supervisor) {
+    process.stdout.write(`The background runner is already up (pid ${supervisor}).\n`);
+    return 1;
+  }
+  await clearPids();
+  const runner = await writePortableRunner();
+  const child = spawn("/bin/sh", [runner], { detached: true, stdio: "ignore", env: { ...process.env } });
+  child.unref();
+  for (let i = 0; i < 50; i += 1) {
+    const pid = await runningPid();
+    if (pid) {
+      process.stdout.write(`Running in the background (pid ${pid}). Log: ${logPath()}\n`);
+      return 0;
+    }
+    await sleep(100);
+  }
+  process.stderr.write(`Started, but no pid file appeared. Check ${logPath()}\n`);
+  return 1;
+}
+
+async function stopBackground(): Promise<number> {
+  const running = await runningPid();
+  const supervisor = await supervisorPid();
+  if (!running && !supervisor) {
+    await clearPids();
+    process.stdout.write("Not running.\n");
+    return 0;
+  }
+  // The runner first, or it would start the agent again the moment this stops it.
+  if (supervisor) {
+    try {
+      process.kill(supervisor, "SIGTERM");
+    } catch {
+      /* Already gone. */
+    }
+    await sleep(300);
+  }
+  if (running && alive(running)) {
+    try {
+      process.kill(running, "SIGTERM");
+    } catch {
+      /* Already gone. */
+    }
+    for (let i = 0; i < 100 && alive(running); i += 1) await sleep(100);
+  }
+  await clearPids();
+  if (running && alive(running)) {
+    process.stderr.write(`pid ${running} did not stop within 10s.\n`);
+    return 1;
+  }
+  process.stdout.write(`Stopped${running ? ` (pid ${running})` : ""}.\n`);
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
   const flags = parseFlags(rest);
@@ -310,6 +407,10 @@ async function main(argv: string[]): Promise<number> {
       return setup(flags);
     case "run":
       return runAgent();
+    case "start":
+      return startBackground();
+    case "stop":
+      return stopBackground();
     case "status":
       return status();
     case "mode":
@@ -325,7 +426,8 @@ async function main(argv: string[]): Promise<number> {
     case "lock":
       return lock();
     case "install": {
-      for (const line of await installService()) process.stdout.write(`${line}\n`);
+      const lines = await installService({ portable: flags.has("portable") });
+      for (const line of lines) process.stdout.write(`${line}\n`);
       return 0;
     }
     case "uninstall": {

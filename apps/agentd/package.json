@@ -5,11 +5,14 @@
   "license": "Apache-2.0",
   "type": "module",
   "description": "Headless host agent: runs on a machine in the background, connects outbound to a Rakazo server, and executes the bot commands that server sends.",
-  "bin": { "rakazo-agentd": "./dist/agentd.mjs" },
+  "bin": {
+    "rakazo-agentd": "./dist/agentd.mjs"
+  },
   "scripts": {
     "build": "node build.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
-    "start": "node dist/agentd.mjs run"
+    "start": "node dist/agentd.mjs run",
+    "package": "node build.mjs && node package.mjs"
   },
   "dependencies": {
     "@rakazo/adapters": "workspace:*",
