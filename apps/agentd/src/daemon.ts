@@ -149,7 +149,12 @@ async function waitForConfig(log: Log, stopping: () => boolean): Promise<AgentCo
       );
       announced = true;
     }
-    await sleep(CONFIG_WATCH_MS);
+    // Checked in slices: stop must take effect while this wait is running, not up to a full
+    // watch interval later.
+    for (let waited = 0; waited < CONFIG_WATCH_MS; waited += 250) {
+      if (stopping()) return null;
+      await sleep(250);
+    }
   }
 }
 

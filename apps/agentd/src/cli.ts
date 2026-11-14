@@ -220,11 +220,18 @@ async function setup(flags: Map<string, string | true>): Promise<number> {
 
 async function status(): Promise<number> {
   const config = await readConfig();
+  const alive = (await runningPid()) !== null;
   if (!config?.device) {
-    process.stdout.write(`Not set up. Configuration: ${configPath()}\n`);
+    process.stdout.write(
+      [
+        `paired     no (${configPath()} has no pairing yet)`,
+        `agent      ${alive ? `running (pid ${await runningPid()}), waiting for setup` : "not running"}`,
+        "next       rakazo-agentd setup --server <url> --email <you>",
+      ].join("\n") + "\n",
+    );
     return 1;
   }
-  const running = (await runningPid()) !== null;
+  const running = alive;
   const approval = Date.parse((await readFile(unlockPath(), "utf8").catch(() => "")).trim());
   const approved = Number.isFinite(approval) && approval > Date.now();
   process.stdout.write(
@@ -336,8 +343,9 @@ async function runningPid(): Promise<number | null> {
 async function startBackground(): Promise<number> {
   const config = await readConfig();
   if (!config?.device) {
-    process.stderr.write("Not set up yet. Run: rakazo-agentd setup\n");
-    return 1;
+    // Starting before pairing is fine: the daemon waits for setup instead of exiting, so the
+    // order install -> start -> setup works and a login-time start never dies.
+    process.stderr.write("Not paired yet; starting anyway, it waits for: rakazo-agentd setup\n");
   }
   const already = await runningPid();
   if (already) {
