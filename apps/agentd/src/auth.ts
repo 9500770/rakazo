@@ -33,11 +33,19 @@ export interface PairedToken {
   token: string;
 }
 
+/**
+ * Better Auth rejects a browser-shaped POST that carries no Origin ("Missing or null Origin"), and a
+ * script sends none by itself; the desktop app gets one for free from its renderer. Every call here
+ * therefore names the server as its own origin.
+ */
 function request(serverUrl: string, path: string, init: RequestInit = {}) {
+  const origin = new URL(serverUrl).origin;
+  const headers = { origin, referer: `${origin}/`, ...(init.headers ?? {}) };
   return fetch(new URL(path, serverUrl), {
     redirect: "error",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     ...init,
+    headers,
   });
 }
 
