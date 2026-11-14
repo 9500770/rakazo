@@ -106,9 +106,8 @@ export function formatCompactedSummary(summary: string, historyCompactedUpToSeq:
 export function historyWindowSize(options: {
   semanticMemoryEnabled: boolean;
   compacted: boolean;
-  recallSucceeded: boolean;
 }): number {
-  return options.semanticMemoryEnabled && options.compacted && options.recallSucceeded
+  return options.semanticMemoryEnabled && options.compacted
     ? HISTORY_WINDOW_SIZE
     : LEGACY_HISTORY_WINDOW_SIZE;
 }
