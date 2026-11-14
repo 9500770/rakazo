@@ -105,6 +105,47 @@ sign-in ends. The daemon therefore refreshes the saved cookie every `sessionRefr
 check one minute after start, so a restart does not postpone it — and, with `setup --remember`,
 signs in again and re-pairs by itself if it ever lapses.
 
+## Running it against a server on the same machine
+
+`setup --server` decides which server the agent pairs with. A self-hosted one on the same Mac mini
+is built from this checkout and deployed out of `~/rakazo-install`, so a change that only touches
+server code (prompts, tool wiring) ships as a new image and needs no agent rebuild or restart.
+
+Build the image with the commit it came from as its tag:
+
+```sh
+cd ~/rakazo-src
+SHA=$(git rev-parse --short=8 HEAD)
+docker build -f infra/compose/Dockerfile -t "rakazo/app:local-$SHA" .
+```
+
+Then deploy it by tag; `docker-compose.images.yml` renders `${RAKAZO_IMAGE:-...}:${RAKAZO_IMAGE_TAG:-edge}`
+for api, web, worker and supervisor, so one `.env` value moves the whole stack:
+
+| File | Keys |
+|---|---|
+| `~/rakazo-install/.env` | `RAKAZO_IMAGE_TAG=local-<sha>`, `RAKAZO_IMAGE_TAG_PREVIOUS=local-<sha>` |
+
+```sh
+cd ~/rakazo-install
+./rakazo.sh start      # Docker stack + Tailscale serve + proxy allow-list check
+./rakazo.sh status     # containers, tunnel, certificate, memory
+./rakazo.sh logs       # api log
+curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:5173/healthz   # 200 when up
+```
+
+Keep `RAKAZO_IMAGE_TAG_PREVIOUS` on the tag that was serving before, so a rollback is one edit plus
+`start` and never a rebuild. Do not use `./rakazo.sh update` for a `local-*` tag: it pulls before
+starting and there is nothing to pull. Change the tag, then `start`.
+
+Then pair the headless agent with whichever server it should obey, the self-hosted one or the
+public one: `setup --server` is the only thing that decides, and the agent keeps working across a
+server image change without being reinstalled.
+
+```sh
+node dist/agentd.mjs setup --server https://<your-server> --email me@example.com
+```
+
 ## Tests
 
 ```sh
