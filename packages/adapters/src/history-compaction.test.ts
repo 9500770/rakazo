@@ -57,16 +57,28 @@ describe("nextCompactionBatchRange", () => {
 });
 
 describe("historyWindowSize", () => {
-  it("uses the smaller window once compaction and semantic memory are both active", () => {
-    expect(historyWindowSize({ semanticMemoryEnabled: true, compacted: true })).toBe(50);
+  it("uses the smaller window only after compaction and a successful recall", () => {
+    expect(
+      historyWindowSize({ semanticMemoryEnabled: true, compacted: true, recallSucceeded: true }),
+    ).toBe(50);
   });
 
   it("keeps the legacy window until a thread has actually been compacted", () => {
-    expect(historyWindowSize({ semanticMemoryEnabled: true, compacted: false })).toBe(200);
+    expect(
+      historyWindowSize({ semanticMemoryEnabled: true, compacted: false, recallSucceeded: false }),
+    ).toBe(200);
+  });
+
+  it("keeps the legacy window when recall fails so compacted facts are not dropped", () => {
+    expect(
+      historyWindowSize({ semanticMemoryEnabled: true, compacted: true, recallSucceeded: false }),
+    ).toBe(200);
   });
 
   it("uses the legacy 200-message window when semantic memory is not configured", () => {
-    expect(historyWindowSize({ semanticMemoryEnabled: false, compacted: true })).toBe(200);
+    expect(
+      historyWindowSize({ semanticMemoryEnabled: false, compacted: true, recallSucceeded: true }),
+    ).toBe(200);
   });
 });
 

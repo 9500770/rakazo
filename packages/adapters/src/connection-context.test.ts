@@ -1,46 +1,7 @@
 import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import { mergeConnectedPlugins } from "./composio-connector.js";
-import {
-  orderRunConnections,
-  persistLivePluginConnections,
-  selectRunConnections,
-} from "./connection-context.js";
-
-describe("run connection ordering", () => {
-  const connection = (id: string, createdAt: string, provider = id) => ({
-    id,
-    connectorId: "composio",
-    provider,
-    displayName: provider,
-    status: "connected",
-    createdAt: new Date(createdAt),
-  });
-
-  it("orders connections by first connection time, then id", () => {
-    const rows = [
-      connection("c-first", "2026-01-02T00:00:00Z", "zulu"),
-      connection("a-early", "2026-01-01T00:00:00Z", "alpha"),
-      connection("b-early", "2026-01-01T00:00:00Z", "bravo"),
-    ];
-    expect(orderRunConnections(rows).map((row) => row.id)).toEqual([
-      "a-early",
-      "b-early",
-      "c-first",
-    ]);
-  });
-
-  it("appends a newly connected plugin after every earlier one", () => {
-    // A name that sorts first must not jump to the front: the connector tool list
-    // and plugin line follow this order, and reordering busts the cached tool prefix.
-    const before = [connection("slack", "2026-02-01T00:00:00Z")];
-    const newcomer = connection("aardvark", "2026-03-01T00:00:00Z");
-    expect(orderRunConnections([...before, newcomer]).map((row) => row.provider)).toEqual([
-      "slack",
-      "aardvark",
-    ]);
-  });
-});
+import { persistLivePluginConnections, selectRunConnections } from "./connection-context.js";
 
 describe("run connection selection", () => {
   it("uses synchronized account statuses in the current run", async () => {

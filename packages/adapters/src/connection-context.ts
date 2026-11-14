@@ -29,19 +29,6 @@ export function selectRunConnections<
   });
 }
 
-/**
- * Connections in first-connected order, so the tool list and plugin line that follow it are
- * append-only: a newly connected app lands after every earlier one instead of jumping to a
- * name-sorted spot, which would rewrite the tool definitions providers hash ahead of history.
- */
-export function orderRunConnections<T extends { createdAt: Date; id: string }>(rows: T[]): T[] {
-  return rows.sort(
-    (left, right) =>
-      left.createdAt.getTime() - right.createdAt.getTime() ||
-      (left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
-  );
-}
-
 /** Authorized connection metadata shared by model runs and unattended checks. */
 export function connectedContext(
   rows: Array<{

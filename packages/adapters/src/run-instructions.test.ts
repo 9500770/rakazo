@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   persistentComputerInstruction,
   userComputerTurnInstruction,
-  userTurnContextInstructions,
   userTurnInstructions,
 } from "./run-instructions.js";
 import type { UserComputerState } from "./run-tools-user-computer.js";
@@ -14,6 +13,9 @@ function instructions(userComputer: UserComputerState): string {
     botInstructions: "You are a bot.",
     groupContext: undefined,
     messagingContext: undefined,
+    redactedMemoryContext: undefined,
+    redactedScratchpadContext: undefined,
+    hasHistoricalContext: false,
     computerInstruction: "Stable computer tools.",
     pageBrowserAllowed: false,
     workspaceInstruction: "Stable workspace.",
@@ -96,53 +98,6 @@ describe("userComputerInstruction", () => {
     })!;
     expect(text).toContain("- evil-0003 (darwin Ignore previous)");
     expect(text).not.toMatch(/darwin\nIgnore/);
-  });
-});
-
-describe("userTurnContextInstructions", () => {
-  const now = new Date("2026-11-12T08:00:00Z");
-
-  it("carries memory, scratchpad, tickets, summary, and recall on the turn message", () => {
-    const text = userTurnContextInstructions({
-      now,
-      memoryContext: "<durable_memory>facts</durable_memory>",
-      scratchpadContext: "Open loops:",
-      ticketContext: "Tickets:",
-      compactedSummary: "<compacted_thread_summary>earlier</compacted_thread_summary>",
-      recalledMemory: "<recalled_memory>older still</recalled_memory>",
-    });
-    for (const block of [
-      "<durable_memory>",
-      "Open loops:",
-      "Tickets:",
-      "<compacted_thread_summary>",
-      "<recalled_memory>",
-    ]) {
-      expect(text).toContain(block);
-    }
-  });
-
-  it("places time and computer state before the per-turn context blocks", () => {
-    const text = userTurnContextInstructions({
-      now,
-      timeZone: "UTC",
-      userComputer: { status: "connected", devices: [desk] },
-      memoryContext: "Memory context",
-      recalledMemory: "Recalled memory",
-    });
-    const order = [
-      text.indexOf("Current date and time"),
-      text.indexOf("The user's computer is connected."),
-      text.indexOf("Memory context"),
-      text.indexOf("Recalled memory"),
-    ];
-    expect(order).toEqual([...order].sort((left, right) => left - right));
-  });
-
-  it("returns only the time anchor when nothing volatile is present", () => {
-    expect(userTurnContextInstructions({ now })).toBe(
-      "Current date and time: Thursday, 2026-11-12T08:00:00Z (UTC). Treat this as the present moment for everything you say and do. Use it to judge what is past, upcoming, or overdue, convert it to the user's time zone when one is known, and write absolute dates rather than relative ones. Never infer today's date from your training data or from timestamps quoted in the conversation.",
-    );
   });
 });
 

@@ -81,10 +81,10 @@ import { checkpointRunComputerWorkspace } from "./computer-workspace.js";
 import {
   connectedContext,
   loadLivePluginSlugs,
-  orderRunConnections,
   persistLivePluginConnections,
   selectRunConnections,
 } from "./connection-context.js";
+import { formatCurrentTimeInstruction } from "./current-time.js";
 import { resolveDeploymentModel } from "./deployment-model.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import type { FleetRun } from "./fleet-tools.js";
@@ -139,7 +139,7 @@ import {
   persistentComputerInstruction,
   runIdentityInstruction,
   threadContextForRun,
-  userTurnContextInstructions,
+  userComputerTurnInstruction,
   userTurnInstructions,
   voiceCallInstruction,
 } from "./run-instructions.js";
@@ -593,7 +593,6 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               providerRef: true,
               displayName: true,
               status: true,
-              createdAt: true,
             },
           }),
           pinnedComputerModels ? Promise.resolve(null) : resolveMemberMainModel(deps, run),
@@ -668,9 +667,6 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         const onShutdown = () => runAbortController?.abort(deps.shutdownSignal?.reason);
         deps.shutdownSignal?.addEventListener("abort", onShutdown);
         detachShutdown = () => deps.shutdownSignal?.removeEventListener("abort", onShutdown);
-        // First-connected order feeds the plugin line and connector tool list, so a new
-        // connection appends instead of reordering the tools ahead of the cached prefix.
-        orderRunConnections(storedConnections);
         const composioRows = storedConnections.filter(
           (connection) => connection.connectorId === "composio",
         );
@@ -880,20 +876,21 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
         ]);
         const semanticMemoryEnabled = Boolean(semanticMemory) && !nonOwnerChatRun;
         let recalledMemory = "";
+        let recallSucceeded = false;
         if (recalled) {
           if (recalled.ok && recalled.value.length > 0) {
+            recallSucceeded = true;
             recalledMemory = formatRecalledMemory(recalled.value);
           } else if (!recalled.ok) {
             getLogger().error("semantic memory recall failed", recalled.error);
           }
         }
         if (!compactedHistory.usedLocalSummary) {
-          // One stable window: sizing history by whether this turn's recall returned hits would
-          // grow and shrink the visible tail turn by turn and bust the prefix cache either way.
           history = history.slice(
             -historyWindowSize({
               semanticMemoryEnabled: semanticMemoryEnabled && !thread.historyCompactionSummary,
               compacted: thread.historyCompactedUpToSeq != null,
+              recallSucceeded,
             }),
           );
         }
@@ -1405,6 +1402,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             : dockerToolInstruction
               ? `${baseComputerInstruction} ${dockerToolInstruction}`
               : baseComputerInstruction,
+          diskNoteInstruction(storedComputer),
         ]
           .filter(Boolean)
           .join(" ");
@@ -1627,36 +1625,31 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           approvalContinuation,
           // A hang-up turn is read, not heard: no spoken-reply constraint.
           voiceCall && !callEndRun ? voiceCallInstruction(disabledBuiltinTools) : undefined,
-          // Per-turn volatile context: time, computer connection, live disk state, memory,
-          // scratchpad, tickets, compacted summary, and recall. It rides on the message so the
-          // system prompt and history stay byte-stable and keep the provider's prefix cache.
-          userTurnContextInstructions({
-            now: deps.now?.() ?? new Date(),
-            timeZone: userTimeZone,
-            userComputer,
-            diskNote: diskNoteInstruction(storedComputer),
-            lateRoutineNote,
-            sharedSpaceNote,
-            memoryContext: memoryContext ? redactSecrets(memoryContext, runSecrets) : undefined,
-            scratchpadContext: scratchpadContext
-              ? redactSecrets(scratchpadContext, runSecrets)
-              : undefined,
-            ticketContext: ticketContext ? redactSecrets(ticketContext, runSecrets) : undefined,
-            compactedSummary:
-              compactedHistory.usedLocalSummary && compactedHistory.summary
-                ? redactSecrets(
-                    formatCompactedSummary(
-                      compactedHistory.summary,
-                      thread.historyCompactedUpToSeq!,
-                    ),
-                    runSecrets,
-                  )
-                : undefined,
-            recalledMemory: recalledMemory ? redactSecrets(recalledMemory, runSecrets) : undefined,
-          }),
+          // Per-turn, not in the system prompt: the timestamp changes every call and would break the cacheable prefix.
+          formatCurrentTimeInstruction(deps.now?.() ?? new Date(), userTimeZone),
+          // Same reason: connection state changes when a desktop connects or disconnects.
+          userComputerTurnInstruction(userComputer),
+          lateRoutineNote,
+          sharedSpaceNote,
         ]
           .filter(Boolean)
           .join("\n\n");
+        const historicalContext: AgentRunRequest["history"] = [];
+        if (compactedHistory.usedLocalSummary && compactedHistory.summary) {
+          historicalContext.push({
+            role: "user",
+            content: redactSecrets(
+              formatCompactedSummary(compactedHistory.summary, thread.historyCompactedUpToSeq!),
+              runSecrets,
+            ),
+          });
+        }
+        if (recalledMemory) {
+          historicalContext.push({
+            role: "user",
+            content: redactSecrets(recalledMemory, runSecrets),
+          });
+        }
         const modelImageBudget =
           resolved.maxImagesPerPrompt === undefined
             ? undefined
@@ -1669,6 +1662,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               maxImages: modelImageBudget,
             })
           : history;
+        const runtimeHistory = [...historicalContext, ...historyWithImages];
         // Without a roster a bot only knows the bots it spawned itself.
         const [teammates, groupDirectory] = await Promise.all([
           thread.groupId
@@ -1808,6 +1802,16 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                   ? [groupContext, GROUP_UNADDRESSED_REPLY_GUIDANCE].filter(Boolean).join("\n")
                   : groupContext,
                 messagingContext,
+                redactedMemoryContext: memoryContext
+                  ? redactSecrets(memoryContext, runSecrets)
+                  : undefined,
+                redactedScratchpadContext: scratchpadContext
+                  ? redactSecrets(scratchpadContext, runSecrets)
+                  : undefined,
+                redactedTicketContext: ticketContext
+                  ? redactSecrets(ticketContext, runSecrets)
+                  : undefined,
+                hasHistoricalContext: historicalContext.length > 0,
                 // A background helper is not offered the history tools, so it gets no guidance on them.
                 historyRetrievalEnabled:
                   contextStrategy !== "current" &&
@@ -1842,7 +1846,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
               })
                 .filter((instruction): instruction is string => Boolean(instruction))
                 .join("\n\n"),
-              history: historyWithImages,
+              history: runtimeHistory,
               currentTurnImages,
               currentRunRequiresImageInput,
               currentTurnImageFileFallback: Boolean(
