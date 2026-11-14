@@ -42,6 +42,22 @@ async function exists(file: string): Promise<boolean> {
   );
 }
 
+/** Mirrors the shell-key allowlist the host command environment applies to inherited variables. */
+const HOST_ENV_KEYS = new Set(
+  [
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR",
+    "TEMP", "TMP", "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "SSH_AUTH_SOCK", "SSL_CERT_FILE",
+    "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE",
+    "GIT_SSL_CAINFO",
+  ].map((name) => name.toUpperCase()),
+);
+
+function hostEnvReachesCommands(name: string): boolean {
+  const key = name.toUpperCase();
+  return HOST_ENV_KEYS.has(key) || key.startsWith("LC_");
+}
+
 /** One generation of history is enough for a service log nobody rotates by hand. */
 async function rotateLog(maxBytes: number): Promise<void> {
   const size = await stat(logPath()).then(
@@ -107,7 +123,16 @@ export async function runAgent(options: { write?: (line: string) => void } = {})
   }
   await rotateLog(config.logMaxBytes);
   // Bot commands inherit this process's environment, so configured extras have to land here.
+  // The host command environment is an allowlist of shell keys (PATH, proxies, locale, TLS
+  // bundles), so say which configured names will never reach a command instead of accepting them
+  // silently and having the bot see them missing.
   Object.assign(process.env, config.env);
+  const dropped = Object.keys(config.env).filter((name) => !hostEnvReachesCommands(name));
+  if (dropped.length)
+    log(
+      "warn",
+      `config.env keys that bot commands will not see (not shell keys): ${dropped.join(", ")}`,
+    );
 
   let stopped = false;
   let client: ReturnType<typeof startUserDeviceClient> | null = null;

@@ -44,7 +44,7 @@ Node 22+ with `node dist/agentd.mjs run`.
 | `askMinutes` | `30` | how long one `unlock` approves requests |
 | `notify` / `notifyMinutes` | `true` / `15` | desktop notification when approval is needed |
 | `workspaceRoot` | `~/.rakazo-agent/computers` | where bot workspaces live |
-| `env` | `{}` | extra environment for bot commands (proxy, toolchain `PATH`) |
+| `env` | `{}` | extra environment for bot commands. Rakazo passes only shell keys (`PATH`, `HTTP(S)_PROXY`, `LANG`/`LC_*`, `TZ`, TLS bundle paths); any other name is reported at startup and never reaches a command |
 | `retryMs` | `{min: 1000, max: 60000}` | reconnect backoff for the device socket |
 | `sessionRefreshHours` | `6` | how often the pairing's sign-in is refreshed |
 | `logMaxBytes` | `5 MiB` | `agent.log` is renamed to `.1` past this size |
